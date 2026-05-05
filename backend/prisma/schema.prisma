@@ -1,0 +1,126 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  VISITOR
+}
+
+enum AdminActionType {
+  USER_CREATED
+  VISITS_BALANCE_UPDATED
+  TARIFF_SOLD
+  USER_DEACTIVATED
+  ADMIN_VISIT_CHECKIN
+  SUBSCRIPTION_FROZEN
+}
+
+enum TimeType {
+  ANY
+  MORNING
+  EVENING
+}
+
+model User {
+  id              Int       @id @default(autoincrement())
+  firstName       String
+  lastName        String
+  phone           String    @unique
+  passwordHash    String
+  role            Role      @default(VISITOR)
+  visitsBalance   Int       @default(0)
+  subscriptionEnd DateTime?
+  isVerified      Boolean   @default(false)
+  isActive        Boolean   @default(true)
+  frozenUntil     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  visitLogs VisitLog[]
+  saleLogs  SaleLog[]
+  adminActions      AdminActionLog[] @relation("AdminActor")
+  targetAdminActions AdminActionLog[] @relation("AdminTarget")
+
+  verificationCode        String?
+  verificationCodeExpires DateTime?
+
+  @@map("users")
+}
+
+model Tariff {
+  id           Int      @id @default(autoincrement())
+  name         String
+  visitsAmount Int?
+  durationDays Int
+  price        Int
+  isActive     Boolean  @default(true)
+  timeType     TimeType @default(ANY)
+  timeStart    String?
+  timeEnd      String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  saleLogs SaleLog[]
+
+  @@map("tariffs")
+}
+
+model VisitLog {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  visitsDeducted Int
+  guestCount     Int      @default(0)
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("visit_logs")
+}
+
+model SaleLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  tariffId  Int
+  pricePaid Int
+  createdAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id])
+  tariff Tariff @relation(fields: [tariffId], references: [id])
+
+  @@map("sale_logs")
+}
+
+model RegistrationAttempt {
+  id                      Int       @id @default(autoincrement())
+  phone                   String    @unique
+  passwordHash            String
+  firstName               String
+  lastName                String
+  verificationCode        String?
+  verificationCodeExpires DateTime?
+  createdAt               DateTime  @default(now())
+
+  @@map("registration_attempts")
+}
+
+model AdminActionLog {
+  id           Int             @id @default(autoincrement())
+  adminId      Int
+  targetUserId Int?
+  action       AdminActionType
+  details      Json?
+  createdAt    DateTime        @default(now())
+
+  admin      User  @relation("AdminActor", fields: [adminId], references: [id])
+  targetUser User? @relation("AdminTarget", fields: [targetUserId], references: [id])
+
+  @@index([adminId, createdAt])
+  @@index([targetUserId, createdAt])
+  @@map("admin_action_logs")
+}

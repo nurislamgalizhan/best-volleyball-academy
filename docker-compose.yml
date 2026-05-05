@@ -1,0 +1,51 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-mercury}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-mercury_pass}
+      POSTGRES_DB: ${DB_NAME:-mercury_medet}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-mercury} -d ${DB_NAME:-mercury_medet}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-mercury}:${DB_PASSWORD:-mercury_pass}@db:5432/${DB_NAME:-mercury_medet}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      PORT: 4000
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
+      GREEN_API_URL: ${GREEN_API_URL:-}
+      GREEN_API_ID_INSTANCE: ${GREEN_API_ID_INSTANCE:-}
+      GREEN_API_TOKEN_INSTANCE: ${GREEN_API_TOKEN_INSTANCE:-}
+      # Admin panel credentials (used on first run / seed)
+      ADMIN_PHONE: ${ADMIN_PHONE:?ADMIN_PHONE is required}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+      ADMIN_FIRST_NAME: ${ADMIN_FIRST_NAME:-Администратор}
+      ADMIN_LAST_NAME: ${ADMIN_LAST_NAME:-Системы}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-80}:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:

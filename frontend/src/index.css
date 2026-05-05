@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+  }
+}
+
+@layer utilities {
+  .animate-flash-green {
+    animation: flashGreen 5s ease-out forwards;
+  }
+}
+
+@keyframes flashGreen {
+  0% { background-color: #bbf7d0; }
+  80% { background-color: #bbf7d0; }
+  100% { background-color: transparent; }
+}

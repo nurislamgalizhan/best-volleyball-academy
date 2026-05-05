@@ -1,0 +1,6 @@
+-- AlterEnum
+ALTER TYPE "AdminActionType" ADD VALUE 'ADMIN_VISIT_CHECKIN';
+ALTER TYPE "AdminActionType" ADD VALUE 'SUBSCRIPTION_FROZEN';
+
+-- AlterTable
+ALTER TABLE "users" ADD COLUMN "frozenUntil" TIMESTAMP(3);
