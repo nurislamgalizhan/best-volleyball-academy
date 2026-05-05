@@ -31,7 +31,7 @@ npm run dev           # http://localhost:5173
 
 ## Учётные данные администратора (seed)
 - Телефон: `77000000000`
-- Пароль: `admin123`
+- Пароль: ``
 
 ## Стек
 - **Backend:** Node.js + Express + Prisma (PostgreSQL) + Socket.io + Zod
