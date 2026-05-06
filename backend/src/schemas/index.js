@@ -51,6 +51,33 @@ export const sellTariffSchema = z.object({
   userId: z.number().int().positive(),
   tariffId: z.number().int().positive(),
   pricePaid: z.number().int().min(0, 'Цена не может быть отрицательной'),
+  paymentMethod: z.enum(['CASH', 'KASPI', 'HALYK', 'MIXED']),
+  cashAmount: z.number().int().min(0).optional().default(0),
+  cardAmount: z.number().int().min(0).optional().default(0),
+  cardProvider: z.enum(['KASPI', 'HALYK']).nullable().optional(),
+}).superRefine((val, ctx) => {
+  if (val.paymentMethod === 'CASH') {
+    if (val.cashAmount !== val.pricePaid) {
+      ctx.addIssue({ code: 'custom', message: 'Сумма наличной оплаты должна совпадать с ценой', path: ['cashAmount'] });
+    }
+  } else if (val.paymentMethod === 'KASPI' || val.paymentMethod === 'HALYK') {
+    if (val.cardAmount !== val.pricePaid) {
+      ctx.addIssue({ code: 'custom', message: 'Сумма картой должна совпадать с ценой', path: ['cardAmount'] });
+    }
+    if (val.cardProvider && val.cardProvider !== val.paymentMethod) {
+      ctx.addIssue({ code: 'custom', message: 'Несоответствие провайдера карты', path: ['cardProvider'] });
+    }
+  } else if (val.paymentMethod === 'MIXED') {
+    if (val.cashAmount <= 0 || val.cardAmount <= 0) {
+      ctx.addIssue({ code: 'custom', message: 'При смешанной оплате обе суммы должны быть больше 0', path: ['cashAmount'] });
+    }
+    if (val.cashAmount + val.cardAmount !== val.pricePaid) {
+      ctx.addIssue({ code: 'custom', message: 'Сумма наличных и картой должна равняться итогу', path: ['cardAmount'] });
+    }
+    if (!val.cardProvider) {
+      ctx.addIssue({ code: 'custom', message: 'Укажите провайдера карты (Kaspi или Halyk)', path: ['cardProvider'] });
+    }
+  }
 });
 
 export const adjustUserSchema = z.object({

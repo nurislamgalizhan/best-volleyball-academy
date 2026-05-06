@@ -27,6 +27,18 @@ enum TimeType {
   EVENING
 }
 
+enum PaymentMethod {
+  CASH
+  KASPI
+  HALYK
+  MIXED
+}
+
+enum CardProvider {
+  KASPI
+  HALYK
+}
+
 model User {
   id              Int       @id @default(autoincrement())
   firstName       String
@@ -84,11 +96,15 @@ model VisitLog {
 }
 
 model SaleLog {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  tariffId  Int
-  pricePaid Int
-  createdAt DateTime @default(now())
+  id            Int            @id @default(autoincrement())
+  userId        Int
+  tariffId      Int
+  pricePaid     Int
+  paymentMethod PaymentMethod  @default(CASH)
+  cashAmount    Int            @default(0)
+  cardAmount    Int            @default(0)
+  cardProvider  CardProvider?
+  createdAt     DateTime       @default(now())
 
   user   User   @relation(fields: [userId], references: [id])
   tariff Tariff @relation(fields: [tariffId], references: [id])

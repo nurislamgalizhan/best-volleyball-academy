@@ -8,7 +8,16 @@ import DateRangePicker from '../../components/ui/DateRangePicker.jsx';
 import Pagination from '../../components/ui/Pagination.jsx';
 
 const TIME_TYPE_LABEL = { ANY: 'Любое', MORNING: 'Утро', EVENING: 'Вечер' };
+const PAYMENT_LABEL = { CASH: 'Наличные', KASPI: 'Kaspi', HALYK: 'Halyk', MIXED: 'Смешанная' };
 const EXPORT_PAGE_SIZE = 100;
+
+function paymentDisplay(sale) {
+  if (sale.paymentMethod === 'MIXED') {
+    const cardLbl = sale.cardProvider === 'HALYK' ? 'Halyk' : 'Kaspi';
+    return `Смеш. (${(sale.cashAmount || 0).toLocaleString()} нал. + ${(sale.cardAmount || 0).toLocaleString()} ${cardLbl})`;
+  }
+  return PAYMENT_LABEL[sale.paymentMethod] || '—';
+}
 
 function downloadWorkbook(XLSX, workbook, fileName) {
   const lib = XLSX.default ?? XLSX;
@@ -125,9 +134,27 @@ export default function AccountingPage() {
       'Телефон': sale.user?.phone ?? '',
       'Тариф': sale.tariff?.name ?? '',
       'Сумма': sale.pricePaid,
+      'Способ оплаты': PAYMENT_LABEL[sale.paymentMethod] || '',
+      'Наличными': sale.cashAmount ?? 0,
+      'Картой': sale.cardAmount ?? 0,
+      'Провайдер карты': sale.cardProvider ? (sale.cardProvider === 'KASPI' ? 'Kaspi' : 'Halyk') : '',
     }));
     const dateLabel = `${format(exportFrom, 'dd.MM.yyyy')}-${format(exportTo, 'dd.MM.yyyy')}`;
-    return { visitsData, salesData, dateLabel };
+    const totals = sales.reduce(
+      (acc, s) => {
+        acc.total += s.pricePaid || 0;
+        const cash = s.cashAmount || 0;
+        const card = s.cardAmount || 0;
+        acc.cash += cash;
+        if (s.cardProvider === 'KASPI') acc.kaspi += card;
+        else if (s.cardProvider === 'HALYK') acc.halyk += card;
+        else if (s.paymentMethod === 'KASPI') acc.kaspi += card || s.pricePaid || 0;
+        else if (s.paymentMethod === 'HALYK') acc.halyk += card || s.pricePaid || 0;
+        return acc;
+      },
+      { total: 0, cash: 0, kaspi: 0, halyk: 0 }
+    );
+    return { visitsData, salesData, dateLabel, totals };
   };
 
   const handleExport = async () => {
@@ -135,7 +162,7 @@ export default function AccountingPage() {
     try {
       const XLSXModule = await import('xlsx');
       const XLSX = XLSXModule.default ?? XLSXModule;
-      const { visitsData, salesData, dateLabel } = await fetchExportData();
+      const { visitsData, salesData, dateLabel, totals } = await fetchExportData();
 
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(
@@ -143,9 +170,20 @@ export default function AccountingPage() {
         XLSX.utils.json_to_sheet(visitsData.length ? visitsData : [{ 'Дата': 'Нет данных' }]),
         'Посещения'
       );
+
+      const salesWithTotals = salesData.length
+        ? [
+            ...salesData,
+            {},
+            { 'Дата': 'Итого', 'Сумма': totals.total },
+            { 'Дата': 'Kaspi', 'Сумма': totals.kaspi },
+            { 'Дата': 'Halyk', 'Сумма': totals.halyk },
+            { 'Дата': 'Наличные', 'Сумма': totals.cash },
+          ]
+        : [{ 'Дата': 'Нет данных' }];
       XLSX.utils.book_append_sheet(
         workbook,
-        XLSX.utils.json_to_sheet(salesData.length ? salesData : [{ 'Дата': 'Нет данных' }]),
+        XLSX.utils.json_to_sheet(salesWithTotals),
         'Продажи'
       );
 
@@ -162,8 +200,18 @@ export default function AccountingPage() {
   const handleExportCsv = async () => {
     setExporting(true);
     try {
-      const { visitsData, salesData, dateLabel } = await fetchExportData();
-      const rows = tab === 'visits' ? visitsData : salesData;
+      const { visitsData, salesData, dateLabel, totals } = await fetchExportData();
+      const salesWithTotals = salesData.length
+        ? [
+            ...salesData,
+            { 'Дата': '', 'Клиент': '', 'Телефон': '', 'Тариф': '', 'Сумма': '', 'Способ оплаты': '', 'Наличными': '', 'Картой': '', 'Провайдер карты': '' },
+            { 'Дата': 'Итого', 'Клиент': '', 'Телефон': '', 'Тариф': '', 'Сумма': totals.total, 'Способ оплаты': '', 'Наличными': '', 'Картой': '', 'Провайдер карты': '' },
+            { 'Дата': 'Kaspi', 'Клиент': '', 'Телефон': '', 'Тариф': '', 'Сумма': totals.kaspi, 'Способ оплаты': '', 'Наличными': '', 'Картой': '', 'Провайдер карты': '' },
+            { 'Дата': 'Halyk', 'Клиент': '', 'Телефон': '', 'Тариф': '', 'Сумма': totals.halyk, 'Способ оплаты': '', 'Наличными': '', 'Картой': '', 'Провайдер карты': '' },
+            { 'Дата': 'Наличные', 'Клиент': '', 'Телефон': '', 'Тариф': '', 'Сумма': totals.cash, 'Способ оплаты': '', 'Наличными': '', 'Картой': '', 'Провайдер карты': '' },
+          ]
+        : salesData;
+      const rows = tab === 'visits' ? visitsData : salesWithTotals;
       const fileName = tab === 'visits' ? `посещения_${dateLabel}.csv` : `продажи_${dateLabel}.csv`;
       if (!rows.length) {
         toast.error('Нет данных для выгрузки за выбранный период');
@@ -300,6 +348,7 @@ export default function AccountingPage() {
                   <th className="text-left px-4 py-3 text-xs font-medium text-slate-400 uppercase tracking-wide">Дата</th>
                   <th className="text-left px-4 py-3 text-xs font-medium text-slate-400 uppercase tracking-wide">Клиент</th>
                   <th className="text-left px-4 py-3 text-xs font-medium text-slate-400 uppercase tracking-wide hidden sm:table-cell">Тариф</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-slate-400 uppercase tracking-wide">Оплата</th>
                   <th className="text-right px-4 py-3 text-xs font-medium text-slate-400 uppercase tracking-wide">Сумма</th>
                 </tr>
               </thead>
@@ -307,30 +356,45 @@ export default function AccountingPage() {
                 {saleLoading ? (
                   [...Array(10)].map((_, index) => (
                     <tr key={index}>
-                      <td colSpan={4} className="px-4 py-3">
+                      <td colSpan={5} className="px-4 py-3">
                         <div className="h-4 bg-slate-100 rounded animate-pulse" />
                       </td>
                     </tr>
                   ))
                 ) : saleLogs.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="px-4 py-8 text-center text-slate-400">Нет продаж за выбранный период</td>
+                    <td colSpan={5} className="px-4 py-8 text-center text-slate-400">Нет продаж за выбранный период</td>
                   </tr>
                 ) : (
-                  saleLogs.map((sale) => (
-                    <tr key={sale.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{format(new Date(sale.createdAt), 'dd.MM.yyyy HH:mm')}</td>
-                      <td className="px-4 py-3">
-                        <p className="font-medium text-slate-800">{sale.user?.firstName} {sale.user?.lastName}</p>
-                        <p className="text-xs text-slate-400">{sale.user?.phone}</p>
-                      </td>
-                      <td className="px-4 py-3 hidden sm:table-cell">
-                        <p className="text-slate-800">{sale.tariff?.name}</p>
-                        <p className="text-xs text-slate-400">{TIME_TYPE_LABEL[sale.tariff?.timeType]}</p>
-                      </td>
-                      <td className="px-4 py-3 text-right font-semibold text-emerald-600 whitespace-nowrap">{sale.pricePaid.toLocaleString()} тг</td>
-                    </tr>
-                  ))
+                  saleLogs.map((sale) => {
+                    const isCash = sale.paymentMethod === 'CASH';
+                    const isKaspi = sale.paymentMethod === 'KASPI' || (sale.paymentMethod === 'MIXED' && sale.cardProvider === 'KASPI');
+                    const isHalyk = sale.paymentMethod === 'HALYK' || (sale.paymentMethod === 'MIXED' && sale.cardProvider === 'HALYK');
+                    return (
+                      <tr key={sale.id} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{format(new Date(sale.createdAt), 'dd.MM.yyyy HH:mm')}</td>
+                        <td className="px-4 py-3">
+                          <p className="font-medium text-slate-800">{sale.user?.firstName} {sale.user?.lastName}</p>
+                          <p className="text-xs text-slate-400">{sale.user?.phone}</p>
+                        </td>
+                        <td className="px-4 py-3 hidden sm:table-cell">
+                          <p className="text-slate-800">{sale.tariff?.name}</p>
+                          <p className="text-xs text-slate-400">{TIME_TYPE_LABEL[sale.tariff?.timeType]}</p>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {isKaspi && <img src="/icons/kaspi.svg" alt="Kaspi" className="w-5 h-5" title="Kaspi" />}
+                            {isHalyk && <img src="/icons/halyk.svg" alt="Halyk" className="w-5 h-5" title="Halyk" />}
+                            {(isCash || sale.paymentMethod === 'MIXED') && (
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">₸ нал.</span>
+                            )}
+                            <span className="text-xs text-slate-500">{paymentDisplay(sale)}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right font-semibold text-emerald-600 whitespace-nowrap">{sale.pricePaid.toLocaleString()} тг</td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>

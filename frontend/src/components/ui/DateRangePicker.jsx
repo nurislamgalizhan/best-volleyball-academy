@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays } from 'date-fns';
+import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, subYears } from 'date-fns';
 import { ru } from 'date-fns/locale';
 
 const presets = [
@@ -7,7 +7,7 @@ const presets = [
   { label: 'Вчера', getValue: () => ({ from: startOfDay(subDays(new Date(), 1)), to: endOfDay(subDays(new Date(), 1)) }) },
   { label: 'Эта неделя', getValue: () => ({ from: startOfWeek(new Date(), { weekStartsOn: 1 }), to: endOfWeek(new Date(), { weekStartsOn: 1 }) }) },
   { label: 'Этот месяц', getValue: () => ({ from: startOfMonth(new Date()), to: endOfMonth(new Date()) }) },
-  { label: 'Все время', getValue: () => ({ from: null, to: null }) },
+  { label: 'Последний год', getValue: () => ({ from: startOfDay(subYears(new Date(), 1)), to: endOfDay(new Date()) }) },
 ];
 
 export default function DateRangePicker({ from, to, onChange }) {

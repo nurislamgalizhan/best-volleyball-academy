@@ -4,7 +4,15 @@ import { createAdminAction } from '../utils/adminActions.js';
 
 export async function sellTariff(req, res, next) {
   try {
-    const { userId, tariffId, pricePaid } = sellTariffSchema.parse(req.body);
+    const { userId, tariffId, pricePaid, paymentMethod, cashAmount, cardAmount, cardProvider } = sellTariffSchema.parse(req.body);
+
+    const resolvedCardProvider =
+      paymentMethod === 'KASPI' ? 'KASPI'
+      : paymentMethod === 'HALYK' ? 'HALYK'
+      : paymentMethod === 'MIXED' ? cardProvider
+      : null;
+    const resolvedCash = paymentMethod === 'CASH' ? pricePaid : paymentMethod === 'MIXED' ? cashAmount : 0;
+    const resolvedCard = paymentMethod === 'KASPI' || paymentMethod === 'HALYK' ? pricePaid : paymentMethod === 'MIXED' ? cardAmount : 0;
 
     const [user, tariff] = await Promise.all([
       prisma.user.findUnique({ where: { id: userId } }),
@@ -56,7 +64,17 @@ export async function sellTariff(req, res, next) {
     subscriptionEnd.setDate(subscriptionEnd.getDate() + tariff.durationDays);
 
     await prisma.$transaction(async (tx) => {
-      await tx.saleLog.create({ data: { userId, tariffId, pricePaid } });
+      await tx.saleLog.create({
+        data: {
+          userId,
+          tariffId,
+          pricePaid,
+          paymentMethod,
+          cashAmount: resolvedCash,
+          cardAmount: resolvedCard,
+          cardProvider: resolvedCardProvider,
+        },
+      });
 
       if (isUnlimited) {
         await tx.user.update({
@@ -79,6 +97,10 @@ export async function sellTariff(req, res, next) {
           pricePaid,
           visitsAmount: tariff.visitsAmount,
           durationDays: tariff.durationDays,
+          paymentMethod,
+          cashAmount: resolvedCash,
+          cardAmount: resolvedCard,
+          cardProvider: resolvedCardProvider,
         },
       });
     });
