@@ -1,6 +1,7 @@
 import { prisma } from '../db.js';
 import { sellTariffSchema, logsQuerySchema } from '../schemas/index.js';
 import { createAdminAction } from '../utils/adminActions.js';
+import { clearExpiredVisits } from '../utils/subscription.js';
 
 export async function sellTariff(req, res, next) {
   try {
@@ -14,10 +15,12 @@ export async function sellTariff(req, res, next) {
     const resolvedCash = paymentMethod === 'CASH' ? pricePaid : paymentMethod === 'MIXED' ? cashAmount : 0;
     const resolvedCard = paymentMethod === 'KASPI' || paymentMethod === 'HALYK' ? pricePaid : paymentMethod === 'MIXED' ? cardAmount : 0;
 
-    const [user, tariff] = await Promise.all([
+    const [foundUser, tariff] = await Promise.all([
       prisma.user.findUnique({ where: { id: userId } }),
       prisma.tariff.findUnique({ where: { id: tariffId } }),
     ]);
+
+    let user = foundUser;
 
     if (!user || !user.isActive) {
       return res.status(404).json({ message: 'Пользователь не найден' });
@@ -36,6 +39,8 @@ export async function sellTariff(req, res, next) {
     }
 
     const now = new Date();
+    user = await clearExpiredVisits(prisma, user, now);
+
     const lastSale = await prisma.saleLog.findFirst({
       where: { userId },
       orderBy: { createdAt: 'desc' },

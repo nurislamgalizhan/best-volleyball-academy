@@ -122,11 +122,12 @@ export default function UserDetailPage() {
   };
 
   const hasSubscription = !!user?.subscriptionEnd;
+  const subscriptionActive = hasSubscription && new Date(user.subscriptionEnd) > new Date();
   const isUnlimited = user?.isUnlimitedSubscription;
-  const canAdjust = hasSubscription && !isUnlimited;
+  const canAdjust = subscriptionActive && !isUnlimited;
   const isFrozen = user?.frozenUntil && new Date(user.frozenUntil) > new Date();
-  const canFreeze = hasSubscription && !user?.isSingleVisitTariff && new Date(user?.subscriptionEnd) > new Date();
-  const canCheckin = hasSubscription && new Date(user?.subscriptionEnd) > new Date();
+  const canFreeze = subscriptionActive && !user?.isSingleVisitTariff;
+  const canCheckin = subscriptionActive;
   const lastTariffVisits = user?.saleLogs?.[0]?.tariff?.visitsAmount ?? null;
 
   const freezeDaysSelected = freezeForm.from && freezeForm.to

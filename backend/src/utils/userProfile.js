@@ -1,4 +1,5 @@
 import { prisma } from '../db.js';
+import { clearExpiredVisits } from './subscription.js';
 
 const TIME_TYPE_LABELS = {
   ANY: 'Любое время',
@@ -20,7 +21,9 @@ function buildTariffWindowLabel(tariff) {
   return TIME_TYPE_LABELS[tariff.timeType];
 }
 
-export async function buildUserProfile(user) {
+export async function buildUserProfile(inputUser) {
+  const user = await clearExpiredVisits(prisma, inputUser);
+
   const lastSale = await prisma.saleLog.findFirst({
     where: { userId: user.id },
     orderBy: { createdAt: 'desc' },

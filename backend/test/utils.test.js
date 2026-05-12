@@ -7,6 +7,7 @@ import {
   getRateLimitState,
   registerFailedAttempt,
 } from '../src/utils/authRateLimit.js';
+import { clearExpiredVisits, hasExpiredSubscription } from '../src/utils/subscription.js';
 
 test('normalizePhone normalizes local and international formats', () => {
   assert.equal(normalizePhone('7771234567'), '77771234567');
@@ -39,4 +40,45 @@ test('auth rate limiter blocks after too many attempts and can be reset', () => 
 
   clearFailedAttempts(ip, phone);
   assert.equal(getRateLimitState(ip, phone).blocked, false);
+});
+
+test('clearExpiredVisits resets remaining visits only after subscription expiry', async () => {
+  const now = new Date('2026-05-12T12:00:00.000Z');
+  const expiredUser = {
+    id: 42,
+    visitsBalance: 3,
+    subscriptionEnd: new Date('2026-05-11T12:00:00.000Z'),
+    saleLogs: [{ id: 1 }],
+  };
+  let updatePayload = null;
+  const prismaClient = {
+    user: {
+      update: async (payload) => {
+        updatePayload = payload;
+        return { visitsBalance: 0, updatedAt: now };
+      },
+    },
+  };
+
+  assert.equal(hasExpiredSubscription(expiredUser, now), true);
+  const normalized = await clearExpiredVisits(prismaClient, expiredUser, now);
+
+  assert.deepEqual(updatePayload, {
+    where: { id: 42 },
+    data: { visitsBalance: 0 },
+    select: { visitsBalance: true, updatedAt: true },
+  });
+  assert.equal(normalized.visitsBalance, 0);
+  assert.deepEqual(normalized.saleLogs, expiredUser.saleLogs);
+
+  const activeUser = {
+    id: 43,
+    visitsBalance: 5,
+    subscriptionEnd: new Date('2026-05-13T12:00:00.000Z'),
+  };
+  updatePayload = null;
+
+  assert.equal(hasExpiredSubscription(activeUser, now), false);
+  assert.equal(await clearExpiredVisits(prismaClient, activeUser, now), activeUser);
+  assert.equal(updatePayload, null);
 });

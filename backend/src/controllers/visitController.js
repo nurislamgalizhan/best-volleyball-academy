@@ -3,6 +3,7 @@ import { checkInSchema, adminCheckInSchema, logsQuerySchema, paginationSchema } 
 import { emitNewVisit } from '../socket/index.js';
 import { getDuplicateVisitWarning } from '../utils/visits.js';
 import { createAdminAction } from '../utils/adminActions.js';
+import { clearExpiredVisits } from '../utils/subscription.js';
 
 function isTimeAllowed(timeType, timeStart, timeEnd) {
   if (timeType === 'ANY') return true;
@@ -20,7 +21,8 @@ export async function checkIn(req, res, next) {
     const { visitsDeducted, guestCount, confirmDuplicate } = checkInSchema.parse(req.body);
     const userId = req.userId;
 
-    const user = await prisma.user.findUnique({ where: { id: userId } });
+    const foundUser = await prisma.user.findUnique({ where: { id: userId } });
+    let user = foundUser;
     if (!user || !user.isActive) {
       return res.status(404).json({ message: 'Пользователь не найден' });
     }
@@ -35,9 +37,7 @@ export async function checkIn(req, res, next) {
     }
 
     if (user.subscriptionEnd < new Date()) {
-      if (user.visitsBalance > 0) {
-        await prisma.user.update({ where: { id: userId }, data: { visitsBalance: 0 } });
-      }
+      user = await clearExpiredVisits(prisma, user);
       return res.status(400).json({ message: 'Срок абонемента истек' });
     }
 
@@ -204,7 +204,8 @@ export async function adminCheckIn(req, res, next) {
   try {
     const { userId, visitsDeducted } = adminCheckInSchema.parse(req.body);
 
-    const user = await prisma.user.findUnique({ where: { id: userId } });
+    const foundUser = await prisma.user.findUnique({ where: { id: userId } });
+    let user = foundUser;
     if (!user || !user.isActive) {
       return res.status(404).json({ message: 'Пользователь не найден' });
     }
@@ -214,6 +215,7 @@ export async function adminCheckIn(req, res, next) {
     }
 
     if (user.subscriptionEnd < new Date()) {
+      user = await clearExpiredVisits(prisma, user);
       return res.status(400).json({ message: 'Срок абонемента клиента истек' });
     }
 

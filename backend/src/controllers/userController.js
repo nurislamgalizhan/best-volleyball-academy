@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import { prisma } from '../db.js';
 import { usersQuerySchema, adjustUserSchema, createUserSchema, logsQuerySchema, freezeSchema } from '../schemas/index.js';
 import { createAdminAction } from '../utils/adminActions.js';
+import { clearExpiredVisits, clearExpiredVisitsForUsers } from '../utils/subscription.js';
 
 function userPublic(user) {
   const { passwordHash, verificationCode, verificationCodeExpires, ...rest } = user;
@@ -12,6 +13,8 @@ export async function getUsers(req, res, next) {
   try {
     const { page, limit, search } = usersQuerySchema.parse(req.query);
     const skip = (page - 1) * limit;
+
+    await clearExpiredVisitsForUsers(prisma);
 
     const where = {
       isActive: true,
@@ -56,7 +59,7 @@ export async function getUsers(req, res, next) {
 export async function getUserById(req, res, next) {
   try {
     const id = parseInt(req.params.id, 10);
-    const user = await prisma.user.findUnique({
+    const foundUser = await prisma.user.findUnique({
       where: { id },
       include: {
         visitLogs: { orderBy: { createdAt: 'desc' }, take: 10 },
@@ -68,9 +71,13 @@ export async function getUserById(req, res, next) {
       },
     });
 
+    let user = foundUser;
+
     if (!user || !user.isActive) {
       return res.status(404).json({ message: 'Пользователь не найден' });
     }
+
+    user = await clearExpiredVisits(prisma, user);
 
     const lastSale = user.saleLogs[0];
     const isUnlimitedSubscription =
@@ -125,12 +132,15 @@ export async function adjustUser(req, res, next) {
     const id = parseInt(req.params.id, 10);
     const data = adjustUserSchema.parse(req.body);
 
-    const user = await prisma.user.findUnique({ where: { id } });
+    const foundUser = await prisma.user.findUnique({ where: { id } });
+    let user = foundUser;
     if (!user || !user.isActive) {
       return res.status(404).json({ message: 'Пользователь не найден' });
     }
 
-    if (!user.subscriptionEnd) {
+    user = await clearExpiredVisits(prisma, user);
+
+    if (!user.subscriptionEnd || user.subscriptionEnd < new Date()) {
       return res.status(400).json({ message: 'У клиента нет абонемента — корректировка недоступна' });
     }
 

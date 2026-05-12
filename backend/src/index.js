@@ -5,7 +5,9 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 
 import { initSocket } from './socket/index.js';
+import { prisma } from './db.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { clearExpiredVisitsForUsers } from './utils/subscription.js';
 
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
@@ -26,6 +28,21 @@ const io = new Server(httpServer, {
 initSocket(io);
 
 app.disable('x-powered-by');
+
+async function cleanupExpiredSubscriptionVisits() {
+  try {
+    const result = await clearExpiredVisitsForUsers(prisma);
+    if (result.count > 0) {
+      console.log(`[Subscriptions] Cleared expired visit balances for ${result.count} user(s)`);
+    }
+  } catch (err) {
+    console.error('[Subscriptions] Failed to clear expired visit balances:', err.message);
+  }
+}
+
+cleanupExpiredSubscriptionVisits();
+const cleanupInterval = setInterval(cleanupExpiredSubscriptionVisits, 60 * 60 * 1000);
+cleanupInterval.unref?.();
 
 app.use(
   cors({

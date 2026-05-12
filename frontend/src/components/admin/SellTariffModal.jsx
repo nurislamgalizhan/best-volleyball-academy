@@ -103,7 +103,7 @@ export default function SellTariffModal({ isOpen, onClose, user, onSuccess }) {
   const hasActiveUnlimited = Boolean(user?.isUnlimitedSubscription && subscriptionActive);
   const blockReason = !user?.isVerified
     ? 'Клиент не прошел верификацию WhatsApp'
-    : user?.visitsBalance > 0
+    : subscriptionActive && user?.visitsBalance > 0
       ? `У клиента есть ${user.visitsBalance} неиспользованных посещений`
       : hasActiveUnlimited
         ? 'У клиента действует безлимитный абонемент'
