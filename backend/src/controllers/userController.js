@@ -9,9 +9,33 @@ function userPublic(user) {
   return rest;
 }
 
+async function getSubscriptionForAction(userId, userSubscriptionId) {
+  const subscriptions = await prisma.userSubscription.findMany({
+    where: {
+      userId,
+      status: 'ACTIVE',
+      ...(userSubscriptionId && { id: userSubscriptionId }),
+    },
+    include: { section: true, tariff: true },
+    orderBy: [{ section: { sortOrder: 'asc' } }, { createdAt: 'desc' }],
+  });
+
+  if (userSubscriptionId && subscriptions.length === 0) {
+    return { error: { status: 404, message: 'Абонемент не найден' } };
+  }
+  if (!userSubscriptionId && subscriptions.length > 1) {
+    return { error: { status: 400, message: 'Выберите секцию/абонемент для операции' } };
+  }
+  if (subscriptions.length === 0) {
+    return { error: { status: 400, message: 'У клиента нет активного абонемента' } };
+  }
+
+  return { subscription: subscriptions[0] };
+}
+
 export async function getUsers(req, res, next) {
   try {
-    const { page, limit, search } = usersQuerySchema.parse(req.query);
+    const { page, limit, search, sectionId } = usersQuerySchema.parse(req.query);
     const skip = (page - 1) * limit;
 
     await clearExpiredVisitsForUsers(prisma);
@@ -19,6 +43,11 @@ export async function getUsers(req, res, next) {
     const where = {
       isActive: true,
       role: 'VISITOR',
+      ...(sectionId && {
+        subscriptions: {
+          some: { sectionId, status: 'ACTIVE' },
+        },
+      }),
       ...(search && {
         OR: [
           { firstName: { contains: search, mode: 'insensitive' } },
@@ -45,6 +74,14 @@ export async function getUsers(req, res, next) {
           isVerified: true,
           isActive: true,
           createdAt: true,
+          subscriptions: {
+            where: { status: 'ACTIVE' },
+            include: {
+              section: { select: { id: true, name: true } },
+              tariff: { select: { id: true, name: true, visitsAmount: true } },
+            },
+            orderBy: [{ section: { sortOrder: 'asc' } }, { createdAt: 'desc' }],
+          },
         },
       }),
       prisma.user.count({ where }),
@@ -62,11 +99,28 @@ export async function getUserById(req, res, next) {
     const foundUser = await prisma.user.findUnique({
       where: { id },
       include: {
-        visitLogs: { orderBy: { createdAt: 'desc' }, take: 10 },
+        subscriptions: {
+          orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
+          include: {
+            section: true,
+            tariff: true,
+            saleLog: true,
+            visitLogs: { orderBy: { createdAt: 'desc' }, take: 3 },
+          },
+        },
+        visitLogs: {
+          orderBy: { createdAt: 'desc' },
+          take: 10,
+          include: { section: { select: { id: true, name: true } } },
+        },
         saleLogs: {
           orderBy: { createdAt: 'desc' },
           take: 10,
-          include: { tariff: { select: { name: true, visitsAmount: true } } },
+          include: {
+            section: { select: { id: true, name: true } },
+            tariff: { select: { name: true, visitsAmount: true } },
+            subscription: { select: { id: true, visitsBalance: true, subscriptionEnd: true, status: true } },
+          },
         },
       },
     });
@@ -79,13 +133,10 @@ export async function getUserById(req, res, next) {
 
     user = await clearExpiredVisits(prisma, user);
 
-    const lastSale = user.saleLogs[0];
-    const isUnlimitedSubscription =
-      lastSale?.tariff?.visitsAmount === null &&
-      user.subscriptionEnd &&
-      user.subscriptionEnd > new Date();
+    const activeSubscriptions = user.subscriptions.filter((subscription) => subscription.status === 'ACTIVE');
+    const isUnlimitedSubscription = activeSubscriptions.some((subscription) => subscription.tariff?.visitsAmount === null);
 
-    res.json({ ...userPublic(user), isUnlimitedSubscription: !!isUnlimitedSubscription });
+    res.json({ ...userPublic(user), activeSubscriptions, isUnlimitedSubscription: !!isUnlimitedSubscription });
   } catch (err) {
     next(err);
   }
@@ -140,34 +191,31 @@ export async function adjustUser(req, res, next) {
 
     user = await clearExpiredVisits(prisma, user);
 
-    if (!user.subscriptionEnd || user.subscriptionEnd < new Date()) {
-      return res.status(400).json({ message: 'У клиента нет абонемента — корректировка недоступна' });
+    const selected = await getSubscriptionForAction(id, data.userSubscriptionId);
+    if (selected.error) {
+      return res.status(selected.error.status).json({ message: selected.error.message });
     }
+    const subscription = selected.subscription;
 
-    const lastSale = await prisma.saleLog.findFirst({
-      where: { userId: id },
-      orderBy: { createdAt: 'desc' },
-      include: { tariff: true },
-    });
-
-    if (lastSale?.tariff?.visitsAmount === null) {
+    if (subscription.tariff?.visitsAmount === null) {
       return res.status(400).json({ message: 'У клиента безлимитный абонемент — корректировка посещений недоступна' });
     }
 
-    if (data.visitsBalance !== undefined && lastSale?.tariff?.visitsAmount != null) {
-      if (data.visitsBalance > lastSale.tariff.visitsAmount) {
+    if (data.visitsBalance !== undefined && subscription.tariff?.visitsAmount != null) {
+      if (data.visitsBalance > subscription.tariff.visitsAmount) {
         return res.status(400).json({
-          message: `Нельзя установить больше ${lastSale.tariff.visitsAmount} посещений (лимит тарифа)`,
+          message: `Нельзя установить больше ${subscription.tariff.visitsAmount} посещений (лимит тарифа)`,
         });
       }
     }
 
     const updated = await prisma.$transaction(async (tx) => {
-      const nextUser = await tx.user.update({
-        where: { id },
+      const nextSubscription = await tx.userSubscription.update({
+        where: { id: subscription.id },
         data: {
           ...(data.visitsBalance !== undefined && { visitsBalance: data.visitsBalance }),
         },
+        include: { section: true, tariff: true },
       });
 
       await createAdminAction(tx, {
@@ -175,15 +223,16 @@ export async function adjustUser(req, res, next) {
         targetUserId: id,
         action: 'VISITS_BALANCE_UPDATED',
         details: {
-          previousVisitsBalance: user.visitsBalance,
-          nextVisitsBalance: nextUser.visitsBalance,
+          sectionName: subscription.section.name,
+          previousVisitsBalance: subscription.visitsBalance,
+          nextVisitsBalance: nextSubscription.visitsBalance,
         },
       });
 
-      return nextUser;
+      return nextSubscription;
     });
 
-    res.json(userPublic(updated));
+    res.json(updated);
   } catch (err) {
     next(err);
   }
@@ -219,6 +268,7 @@ export async function freezeSubscription(req, res, next) {
   try {
     const id = parseInt(req.params.id, 10);
     const isAdmin = req.userRole === 'ADMIN';
+    const { userSubscriptionId, freezeFrom, freezeTo } = freezeSchema.parse(req.body);
 
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user || !user.isActive) {
@@ -229,49 +279,52 @@ export async function freezeSubscription(req, res, next) {
       return res.status(403).json({ message: 'Нет доступа' });
     }
 
-    if (!user.subscriptionEnd || user.subscriptionEnd < new Date()) {
+    const selected = await getSubscriptionForAction(id, userSubscriptionId);
+    if (selected.error) {
+      return res.status(selected.error.status).json({ message: selected.error.message });
+    }
+    const subscription = selected.subscription;
+
+    if (subscription.subscriptionEnd < new Date()) {
       return res.status(400).json({ message: 'Нет активного абонемента для заморозки' });
     }
-
-    if (user.frozenUntil && user.frozenUntil > new Date()) {
+    if (subscription.frozenUntil && subscription.frozenUntil > new Date()) {
       return res.status(400).json({ message: 'Абонемент уже заморожен' });
     }
-
-    const lastSale = await prisma.saleLog.findFirst({
-      where: { userId: id },
-      orderBy: { createdAt: 'desc' },
-      include: { tariff: true },
-    });
-
-    if (lastSale?.tariff?.visitsAmount === 1) {
+    if (subscription.tariff?.visitsAmount === 1) {
       return res.status(400).json({ message: 'Разовое посещение нельзя заморозить' });
     }
 
-    const { freezeFrom, freezeTo } = freezeSchema.parse(req.body);
     const freezeFromDate = new Date(freezeFrom);
     const freezeToDate = new Date(freezeTo);
     const freezeDays = Math.ceil((freezeToDate - freezeFromDate) / (24 * 60 * 60 * 1000));
 
-    if (freezeToDate > user.subscriptionEnd) {
+    if (freezeToDate > subscription.subscriptionEnd) {
       return res.status(400).json({ message: 'Период заморозки выходит за рамки абонемента' });
     }
 
-    const newSubscriptionEnd = new Date(user.subscriptionEnd.getTime() + freezeDays * 24 * 60 * 60 * 1000);
+    const newSubscriptionEnd = new Date(subscription.subscriptionEnd.getTime() + freezeDays * 24 * 60 * 60 * 1000);
 
     const updated = await prisma.$transaction(async (tx) => {
-      const u = await tx.user.update({
-        where: { id },
+      const s = await tx.userSubscription.update({
+        where: { id: subscription.id },
         data: { frozenUntil: freezeToDate, subscriptionEnd: newSubscriptionEnd },
+        include: { section: true, tariff: true },
       });
 
       await createAdminAction(tx, {
         adminId: req.userId,
         targetUserId: id,
         action: 'SUBSCRIPTION_FROZEN',
-        details: { freezeFrom: freezeFromDate.toISOString(), frozenUntil: freezeToDate.toISOString(), daysAdded: freezeDays },
+        details: {
+          sectionName: subscription.section.name,
+          freezeFrom: freezeFromDate.toISOString(),
+          frozenUntil: freezeToDate.toISOString(),
+          daysAdded: freezeDays,
+        },
       });
 
-      return u;
+      return s;
     });
 
     res.json({ message: `Абонемент заморожен на ${freezeDays} дн.`, frozenUntil: updated.frozenUntil });
@@ -284,6 +337,7 @@ export async function unfreezeSubscription(req, res, next) {
   try {
     const id = parseInt(req.params.id, 10);
     const isAdmin = req.userRole === 'ADMIN';
+    const userSubscriptionId = req.body?.userSubscriptionId ? parseInt(req.body.userSubscriptionId, 10) : undefined;
 
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user || !user.isActive) {
@@ -294,17 +348,24 @@ export async function unfreezeSubscription(req, res, next) {
       return res.status(403).json({ message: 'Нет доступа' });
     }
 
-    if (!user.frozenUntil || user.frozenUntil <= new Date()) {
+    const selected = await getSubscriptionForAction(id, userSubscriptionId);
+    if (selected.error) {
+      return res.status(selected.error.status).json({ message: selected.error.message });
+    }
+    const subscription = selected.subscription;
+
+    if (!subscription.frozenUntil || subscription.frozenUntil <= new Date()) {
       return res.status(400).json({ message: 'Абонемент не заморожен' });
     }
 
     const now = new Date();
-    const remainingFreezeDays = Math.ceil((user.frozenUntil.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
-    const newSubscriptionEnd = new Date(user.subscriptionEnd.getTime() - remainingFreezeDays * 24 * 60 * 60 * 1000);
+    const remainingFreezeDays = Math.ceil((subscription.frozenUntil.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
+    const newSubscriptionEnd = new Date(subscription.subscriptionEnd.getTime() - remainingFreezeDays * 24 * 60 * 60 * 1000);
 
-    const updated = await prisma.user.update({
-      where: { id },
+    const updated = await prisma.userSubscription.update({
+      where: { id: subscription.id },
       data: { frozenUntil: null, subscriptionEnd: newSubscriptionEnd },
+      include: { section: true, tariff: true },
     });
 
     res.json({ message: 'Абонемент разморожен', subscriptionEnd: updated.subscriptionEnd });

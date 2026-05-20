@@ -8,6 +8,8 @@ const ACTION_LABELS = {
   USER_CREATED: 'Создан пользователь',
   VISITS_BALANCE_UPDATED: 'Изменен баланс посещений',
   TARIFF_SOLD: 'Продан абонемент',
+  SALE_UPDATED: 'Исправлена продажа',
+  SALE_REFUNDED: 'Возврат абонемента',
   USER_DEACTIVATED: 'Пользователь деактивирован',
   ADMIN_VISIT_CHECKIN: 'Ручное списание посещения',
   SUBSCRIPTION_FROZEN: 'Абонемент заморожен',
@@ -21,7 +23,15 @@ function renderDetails(log) {
   }
 
   if (log.action === 'TARIFF_SOLD') {
-    return `${details.tariffName || 'Тариф'} за ${Number(details.pricePaid || 0).toLocaleString()} тг`;
+    return `${details.sectionName ? `${details.sectionName} · ` : ''}${details.tariffName || 'Тариф'} за ${Number(details.pricePaid || 0).toLocaleString()} тг`;
+  }
+
+  if (log.action === 'SALE_UPDATED') {
+    return `Продажа #${details.saleId}: ${details.previous?.tariffName || 'тариф'} -> ${details.next?.tariffName || 'тариф'}`;
+  }
+
+  if (log.action === 'SALE_REFUNDED') {
+    return `${details.sectionName ? `${details.sectionName} · ` : ''}${details.tariffName || 'Тариф'}, возврат ${Number(details.refundAmount || 0).toLocaleString()} тг`;
   }
 
   if (log.action === 'USER_CREATED') {

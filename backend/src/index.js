@@ -7,10 +7,11 @@ import { Server } from 'socket.io';
 import { initSocket } from './socket/index.js';
 import { prisma } from './db.js';
 import { errorHandler } from './middleware/errorHandler.js';
-import { clearExpiredVisitsForUsers } from './utils/subscription.js';
+import { startDailyExpiredVisitsCleanupJob } from './utils/subscription.js';
 
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
+import sectionRoutes from './routes/sections.js';
 import tariffRoutes from './routes/tariffs.js';
 import visitRoutes from './routes/visits.js';
 import saleRoutes from './routes/sales.js';
@@ -28,21 +29,7 @@ const io = new Server(httpServer, {
 initSocket(io);
 
 app.disable('x-powered-by');
-
-async function cleanupExpiredSubscriptionVisits() {
-  try {
-    const result = await clearExpiredVisitsForUsers(prisma);
-    if (result.count > 0) {
-      console.log(`[Subscriptions] Cleared expired visit balances for ${result.count} user(s)`);
-    }
-  } catch (err) {
-    console.error('[Subscriptions] Failed to clear expired visit balances:', err.message);
-  }
-}
-
-cleanupExpiredSubscriptionVisits();
-const cleanupInterval = setInterval(cleanupExpiredSubscriptionVisits, 60 * 60 * 1000);
-cleanupInterval.unref?.();
+startDailyExpiredVisitsCleanupJob(prisma);
 
 app.use(
   cors({
@@ -55,6 +42,7 @@ app.use(express.json({ limit: '16kb' }));
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/sections', sectionRoutes);
 app.use('/api/tariffs', tariffRoutes);
 app.use('/api/visits', visitRoutes);
 app.use('/api/sales', saleRoutes);

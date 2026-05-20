@@ -1,9 +1,9 @@
 import { prisma } from '../db.js';
-import { clearExpiredVisits } from './subscription.js';
+import { clearExpiredVisits, clearExpiredVisitsForUsers } from './subscription.js';
 
 const TIME_TYPE_LABELS = {
   ANY: 'Любое время',
-  MORNING: 'Утреннее время',
+  MORNING: 'Дневное время',
   EVENING: 'Вечернее время',
 };
 
@@ -22,35 +22,54 @@ function buildTariffWindowLabel(tariff) {
 }
 
 export async function buildUserProfile(inputUser) {
+  await clearExpiredVisitsForUsers(prisma);
   const user = await clearExpiredVisits(prisma, inputUser);
 
-  const lastSale = await prisma.saleLog.findFirst({
+  const subscriptions = await prisma.userSubscription.findMany({
     where: { userId: user.id },
-    orderBy: { createdAt: 'desc' },
-    include: { tariff: true },
+    orderBy: [{ section: { sortOrder: 'asc' } }, { createdAt: 'desc' }],
+    include: {
+      section: true,
+      tariff: true,
+      saleLog: true,
+    },
   });
 
-  const hasActiveSubscription = Boolean(user.subscriptionEnd && user.subscriptionEnd > new Date());
-  const currentTariff = hasActiveSubscription && lastSale?.tariff
-    ? {
-        id: lastSale.tariff.id,
-        name: lastSale.tariff.name,
-        visitsAmount: lastSale.tariff.visitsAmount,
-        durationDays: lastSale.tariff.durationDays,
-        price: lastSale.tariff.price,
-        timeType: lastSale.tariff.timeType,
-        timeStart: lastSale.tariff.timeStart,
-        timeEnd: lastSale.tariff.timeEnd,
-        accessLabel: buildTariffWindowLabel(lastSale.tariff),
-      }
-    : null;
+  const activeSubscriptions = subscriptions
+    .filter((subscription) => subscription.status === 'ACTIVE')
+    .map((subscription) => ({
+      id: subscription.id,
+      sectionId: subscription.sectionId,
+      section: subscription.section,
+      tariffId: subscription.tariffId,
+      tariff: {
+        id: subscription.tariff.id,
+        name: subscription.tariff.name,
+        visitsAmount: subscription.tariff.visitsAmount,
+        durationDays: subscription.tariff.durationDays,
+        price: subscription.tariff.price,
+        timeType: subscription.tariff.timeType,
+        timeStart: subscription.tariff.timeStart,
+        timeEnd: subscription.tariff.timeEnd,
+        accessLabel: buildTariffWindowLabel(subscription.tariff),
+      },
+      visitsBalance: subscription.visitsBalance,
+      subscriptionEnd: subscription.subscriptionEnd,
+      frozenUntil: subscription.frozenUntil,
+      status: subscription.status,
+    }));
 
-  const isSingleVisitTariff = Boolean(lastSale?.tariff?.visitsAmount === 1);
+  const currentSubscription = activeSubscriptions[0] || null;
+  const currentTariff = currentSubscription?.tariff || null;
+  const isSingleVisitTariff = Boolean(activeSubscriptions.length === 1 && currentTariff?.visitsAmount === 1);
 
   return {
     ...sanitizeUser(user),
-    isUnlimitedSubscription: Boolean(currentTariff && currentTariff.visitsAmount === null),
+    subscriptions,
+    activeSubscriptions,
+    isUnlimitedSubscription: activeSubscriptions.some((subscription) => subscription.tariff.visitsAmount === null),
     isSingleVisitTariff,
+    currentSubscription,
     currentTariff,
   };
 }

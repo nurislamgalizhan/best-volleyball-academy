@@ -34,6 +34,7 @@ export const resendCodeSchema = z.object({
 });
 
 export const checkInSchema = z.object({
+  sectionId: z.number().int().positive().optional(),
   visitsDeducted: z.number().int('Должно быть целым числом').min(1, 'Минимум 1 посещение'),
   guestCount: z.number().int('Должно быть целым числом').min(0, 'Минимум 0 гостей').default(0),
   confirmDuplicate: z.boolean().optional().default(false),
@@ -80,11 +81,29 @@ export const sellTariffSchema = z.object({
   }
 });
 
+export const updateSaleSchema = z.object({
+  tariffId: z.number().int().positive().optional(),
+  pricePaid: z.number().int().min(0, 'Цена не может быть отрицательной').optional(),
+  paymentMethod: z.enum(['CASH', 'KASPI', 'HALYK', 'MIXED']).optional(),
+  cashAmount: z.number().int().min(0).optional(),
+  cardAmount: z.number().int().min(0).optional(),
+  cardProvider: z.enum(['KASPI', 'HALYK']).nullable().optional(),
+}).refine(
+  (val) => Object.keys(val).length > 0,
+  { message: 'Нет данных для обновления' }
+);
+
+export const refundSaleSchema = z.object({
+  refundAmount: z.number().int().min(0, 'Сумма возврата не может быть отрицательной'),
+});
+
 export const adjustUserSchema = z.object({
+  userSubscriptionId: z.number().int().positive().optional(),
   visitsBalance: z.number().int().min(0).optional(),
 });
 
 export const createTariffSchema = z.object({
+  sectionId: z.number().int().positive(),
   name: z.string().min(1).max(100),
   visitsAmount: z.number().int().positive().nullable().optional(),
   durationDays: z.number().int().positive(),
@@ -107,10 +126,12 @@ export const logsQuerySchema = paginationSchema.extend({
   from: z.string().datetime({ offset: true }).optional(),
   to: z.string().datetime({ offset: true }).optional(),
   userId: z.coerce.number().int().positive().optional(),
+  sectionId: z.coerce.number().int().positive().optional(),
 });
 
 export const usersQuerySchema = paginationSchema.extend({
   search: z.string().optional(),
+  sectionId: z.coerce.number().int().positive().optional(),
 });
 
 export const createUserSchema = z.object({
@@ -123,10 +144,12 @@ export const createUserSchema = z.object({
 
 export const adminCheckInSchema = z.object({
   userId: z.number().int().positive(),
+  sectionId: z.number().int().positive().optional(),
   visitsDeducted: z.number().int().min(1),
 });
 
 export const freezeSchema = z.object({
+  userSubscriptionId: z.number().int().positive().optional(),
   freezeFrom: z.string().datetime({ offset: true }),
   freezeTo: z.string().datetime({ offset: true }),
 }).superRefine((val, ctx) => {
@@ -140,3 +163,13 @@ export const freezeSchema = z.object({
     ctx.addIssue({ code: 'custom', message: 'Максимальный срок заморозки — 15 дней', path: ['freezeTo'] });
   }
 });
+
+export const sectionSchema = z.object({
+  name: z.string().min(1, 'Название обязательно').max(100, 'Максимум 100 символов'),
+  isActive: z.boolean().optional(),
+});
+
+export const updateSectionSchema = sectionSchema.partial().refine(
+  (val) => Object.keys(val).length > 0,
+  { message: 'Нет данных для обновления' }
+);

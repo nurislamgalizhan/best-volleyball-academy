@@ -7,7 +7,12 @@ import {
   getRateLimitState,
   registerFailedAttempt,
 } from '../src/utils/authRateLimit.js';
-import { clearExpiredVisits, hasExpiredSubscription } from '../src/utils/subscription.js';
+import {
+  clearExpiredVisits,
+  clearExpiredVisitsForUsers,
+  getMillisecondsUntilNextDailyCleanup,
+  hasExpiredSubscription,
+} from '../src/utils/subscription.js';
 
 test('normalizePhone normalizes local and international formats', () => {
   assert.equal(normalizePhone('7771234567'), '77771234567');
@@ -70,6 +75,7 @@ test('clearExpiredVisits resets remaining visits only after subscription expiry'
   });
   assert.equal(normalized.visitsBalance, 0);
   assert.deepEqual(normalized.saleLogs, expiredUser.saleLogs);
+  assert.equal(hasExpiredSubscription({ subscriptionEnd: now }, now), true);
 
   const activeUser = {
     id: 43,
@@ -81,4 +87,59 @@ test('clearExpiredVisits resets remaining visits only after subscription expiry'
   assert.equal(hasExpiredSubscription(activeUser, now), false);
   assert.equal(await clearExpiredVisits(prismaClient, activeUser, now), activeUser);
   assert.equal(updatePayload, null);
+});
+
+test('expired visits cleanup updates database rows due at the current time', async () => {
+  const now = new Date('2026-05-12T12:00:00.000Z');
+  let userUpdateManyPayload = null;
+  let subscriptionUpdateManyPayload = null;
+  const prismaClient = {
+    userSubscription: {
+      updateMany: async (payload) => {
+        subscriptionUpdateManyPayload = payload;
+        return { count: 3 };
+      },
+    },
+    user: {
+      updateMany: async (payload) => {
+        userUpdateManyPayload = payload;
+        return { count: 2 };
+      },
+    },
+  };
+
+  const result = await clearExpiredVisitsForUsers(prismaClient, now);
+
+  assert.equal(result.count, 5);
+  assert.deepEqual(subscriptionUpdateManyPayload, {
+    where: {
+      status: 'ACTIVE',
+      subscriptionEnd: { lte: now },
+    },
+    data: { status: 'EXPIRED', visitsBalance: 0, frozenUntil: null },
+  });
+  assert.deepEqual(userUpdateManyPayload, {
+    where: {
+      role: 'VISITOR',
+      isActive: true,
+      subscriptionEnd: { lte: now },
+      visitsBalance: { gt: 0 },
+    },
+    data: { visitsBalance: 0 },
+  });
+});
+
+test('daily cleanup is scheduled for 23:59 server time', () => {
+  assert.equal(
+    getMillisecondsUntilNextDailyCleanup(new Date('2026-05-12T23:58:30.000')),
+    30 * 1000
+  );
+  assert.equal(
+    getMillisecondsUntilNextDailyCleanup(new Date('2026-05-12T23:59:00.000')),
+    24 * 60 * 60 * 1000
+  );
+  assert.equal(
+    getMillisecondsUntilNextDailyCleanup(new Date('2026-05-12T12:00:00.000')),
+    (11 * 60 + 59) * 60 * 1000
+  );
 });

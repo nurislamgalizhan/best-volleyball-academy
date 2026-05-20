@@ -4,9 +4,14 @@ import { createTariffSchema, updateTariffSchema } from '../schemas/index.js';
 export async function getTariffs(req, res, next) {
   try {
     const onlyActive = req.query.active === 'true';
+    const sectionId = req.query.sectionId ? parseInt(req.query.sectionId, 10) : null;
     const tariffs = await prisma.tariff.findMany({
-      where: onlyActive ? { isActive: true } : undefined,
-      orderBy: [{ timeType: 'asc' }, { price: 'asc' }],
+      where: {
+        ...(onlyActive && { isActive: true, section: { isActive: true } }),
+        ...(sectionId && { sectionId }),
+      },
+      include: { section: true },
+      orderBy: [{ section: { sortOrder: 'asc' } }, { timeType: 'asc' }, { price: 'asc' }],
     });
     res.json(tariffs);
   } catch (err) {
@@ -17,7 +22,7 @@ export async function getTariffs(req, res, next) {
 export async function getTariffById(req, res, next) {
   try {
     const id = parseInt(req.params.id);
-    const tariff = await prisma.tariff.findUnique({ where: { id } });
+    const tariff = await prisma.tariff.findUnique({ where: { id }, include: { section: true } });
     if (!tariff) return res.status(404).json({ message: 'Тариф не найден' });
     res.json(tariff);
   } catch (err) {

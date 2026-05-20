@@ -7,10 +7,10 @@ export function useUsers() {
   const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
   const [loading, setLoading] = useState(false);
 
-  const fetchUsers = useCallback(async ({ page = 1, limit = 20, search = '' } = {}) => {
+  const fetchUsers = useCallback(async ({ page = 1, limit = 20, search = '', sectionId } = {}) => {
     setLoading(true);
     try {
-      const { data } = await api.get('/users', { params: { page, limit, search } });
+      const { data } = await api.get('/users', { params: { page, limit, search, ...(sectionId && { sectionId }) } });
       setUsers(data.data);
       setMeta(data.meta);
     } catch (err) {

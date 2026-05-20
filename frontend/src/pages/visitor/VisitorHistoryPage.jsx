@@ -53,7 +53,7 @@ export default function VisitorHistoryPage() {
                 <div>
                   <p className="font-medium text-slate-800">{format(new Date(log.createdAt), 'dd.MM.yyyy HH:mm')}</p>
                   <p className="text-sm text-slate-500">
-                    {log.guestCount > 0 ? `С гостями: ${log.guestCount}` : 'Без гостей'}
+                    {log.section?.name || 'Секция'} · {log.guestCount > 0 ? `С гостями: ${log.guestCount}` : 'Без гостей'}
                   </p>
                 </div>
                 <div className="text-right">

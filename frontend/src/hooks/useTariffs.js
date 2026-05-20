@@ -6,10 +6,15 @@ export function useTariffs(onlyActive = false) {
   const [tariffs, setTariffs] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  const fetchTariffs = useCallback(async () => {
+  const fetchTariffs = useCallback(async ({ sectionId } = {}) => {
     setLoading(true);
     try {
-      const { data } = await api.get('/tariffs', { params: onlyActive ? { active: true } : {} });
+      const { data } = await api.get('/tariffs', {
+        params: {
+          ...(onlyActive && { active: true }),
+          ...(sectionId && { sectionId }),
+        },
+      });
       setTariffs(data);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Ошибка загрузки тарифов');

@@ -7,7 +7,7 @@ export function useVisitLogs() {
   const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
   const [loading, setLoading] = useState(false);
 
-  const fetchLogs = useCallback(async ({ page = 1, limit = 20, from, to, userId } = {}) => {
+  const fetchLogs = useCallback(async ({ page = 1, limit = 20, from, to, userId, sectionId } = {}) => {
     setLoading(true);
     try {
       const { data } = await api.get('/visits', {
@@ -17,6 +17,7 @@ export function useVisitLogs() {
           ...(from && { from: from.toISOString() }),
           ...(to && { to: to.toISOString() }),
           ...(userId && { userId }),
+          ...(sectionId && { sectionId }),
         },
       });
       setLogs(data.data);
@@ -40,7 +41,7 @@ export function useSaleLogs() {
   const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1, totalRevenue: 0 });
   const [loading, setLoading] = useState(false);
 
-  const fetchLogs = useCallback(async ({ page = 1, limit = 20, from, to } = {}) => {
+  const fetchLogs = useCallback(async ({ page = 1, limit = 20, from, to, sectionId } = {}) => {
     setLoading(true);
     try {
       const { data } = await api.get('/sales', {
@@ -49,6 +50,7 @@ export function useSaleLogs() {
           limit,
           ...(from && { from: from.toISOString() }),
           ...(to && { to: to.toISOString() }),
+          ...(sectionId && { sectionId }),
         },
       });
       setLogs(data.data);

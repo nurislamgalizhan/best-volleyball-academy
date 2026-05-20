@@ -1,18 +1,22 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useUsers } from '../../hooks/useUsers.js';
+import { useSections } from '../../hooks/useSections.js';
 import Pagination from '../../components/ui/Pagination.jsx';
 import Button from '../../components/ui/Button.jsx';
 import { format } from 'date-fns';
 
 export default function UsersPage() {
   const { users, meta, loading, fetchUsers } = useUsers();
+  const { sections, fetchSections } = useSections(true);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
+  const [sectionId, setSectionId] = useState('all');
 
-  const load = useCallback(() => fetchUsers({ page, search }), [page, search, fetchUsers]);
+  const load = useCallback(() => fetchUsers({ page, search, sectionId: sectionId === 'all' ? undefined : sectionId }), [page, search, sectionId, fetchUsers]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { fetchSections(); }, [fetchSections]);
 
   // Reset to page 1 when search changes
   const handleSearch = (e) => {
@@ -31,6 +35,14 @@ export default function UsersPage() {
 
       <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
         <div className="p-4 border-b border-slate-100">
+          <div className="flex flex-wrap gap-2 mb-4">
+            <button onClick={() => { setSectionId('all'); setPage(1); }} className={`px-3 py-2 rounded-xl border text-sm ${sectionId === 'all' ? 'bg-brand-50 border-brand-500 text-brand-700' : 'border-slate-200 text-slate-600'}`}>Все</button>
+            {sections.map((section) => (
+              <button key={section.id} onClick={() => { setSectionId(String(section.id)); setPage(1); }} className={`px-3 py-2 rounded-xl border text-sm ${sectionId === String(section.id) ? 'bg-brand-50 border-brand-500 text-brand-700' : 'border-slate-200 text-slate-600'}`}>
+                {section.name}
+              </button>
+            ))}
+          </div>
           <div className="relative">
             <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -76,9 +88,15 @@ export default function UsersPage() {
                 </div>
                 <div className="text-right hidden sm:block">
                   <p className="text-sm font-semibold text-slate-800">
-                    {u.visitsBalance} посещений
+                    {u.subscriptions?.length
+                      ? u.subscriptions.map((s) => `${s.section?.name}: ${s.tariff?.visitsAmount === null ? '∞' : s.visitsBalance}`).join(' · ')
+                      : `${u.visitsBalance} посещений`}
                   </p>
-                  {u.subscriptionEnd && (
+                  {u.subscriptions?.[0]?.subscriptionEnd ? (
+                    <p className="text-xs text-slate-400">
+                      до {format(new Date(u.subscriptions[0].subscriptionEnd), 'dd.MM.yyyy')}
+                    </p>
+                  ) : u.subscriptionEnd && (
                     <p className="text-xs text-slate-400">
                       до {format(new Date(u.subscriptionEnd), 'dd.MM.yyyy')}
                     </p>

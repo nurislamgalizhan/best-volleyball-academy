@@ -1,9 +1,9 @@
 import { prisma } from '../db.js';
-import { checkInSchema, adminCheckInSchema, logsQuerySchema, paginationSchema } from '../schemas/index.js';
+import { adminCheckInSchema, checkInSchema, logsQuerySchema, paginationSchema } from '../schemas/index.js';
 import { emitNewVisit } from '../socket/index.js';
-import { getDuplicateVisitWarning } from '../utils/visits.js';
 import { createAdminAction } from '../utils/adminActions.js';
-import { clearExpiredVisits } from '../utils/subscription.js';
+import { clearExpiredVisitsForUsers } from '../utils/subscription.js';
+import { getDuplicateVisitWarning } from '../utils/visits.js';
 
 function isTimeAllowed(timeType, timeStart, timeEnd) {
   if (timeType === 'ANY') return true;
@@ -16,69 +16,108 @@ function isTimeAllowed(timeType, timeStart, timeEnd) {
   return currentMinutes >= startH * 60 + startM && currentMinutes <= endH * 60 + endM;
 }
 
+async function getSelectedSubscription(userId, sectionId) {
+  await clearExpiredVisitsForUsers(prisma);
+
+  const subscriptions = await prisma.userSubscription.findMany({
+    where: {
+      userId,
+      status: 'ACTIVE',
+      ...(sectionId && { sectionId }),
+    },
+    orderBy: [{ section: { sortOrder: 'asc' } }, { createdAt: 'desc' }],
+    include: { section: true, tariff: true },
+  });
+
+  if (sectionId && subscriptions.length === 0) {
+    return { error: { status: 400, message: 'В выбранной секции нет активного абонемента' } };
+  }
+  if (!sectionId && subscriptions.length > 1) {
+    return {
+      error: {
+        status: 400,
+        code: 'SECTION_SELECTION_REQUIRED',
+        message: 'Выберите секцию для списания абонемента',
+        subscriptions: subscriptions.map((s) => ({
+          id: s.id,
+          sectionId: s.sectionId,
+          sectionName: s.section.name,
+          visitsBalance: s.visitsBalance,
+          subscriptionEnd: s.subscriptionEnd,
+          tariff: s.tariff,
+        })),
+      },
+    };
+  }
+  if (subscriptions.length === 0) {
+    return { error: { status: 400, message: 'Нет активного абонемента' } };
+  }
+
+  return { subscription: subscriptions[0] };
+}
+
+function validateSubscriptionForCheckIn(subscription, visitsDeducted, guestCount) {
+  const now = new Date();
+  if (subscription.frozenUntil && subscription.frozenUntil > now) {
+    const until = subscription.frozenUntil.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    return { status: 400, message: `Абонемент заморожен до ${until}` };
+  }
+  if (subscription.subscriptionEnd <= now) {
+    return { status: 400, message: 'Срок абонемента истек' };
+  }
+
+  const { timeType, timeStart, timeEnd, visitsAmount } = subscription.tariff;
+  if (!isTimeAllowed(timeType, timeStart, timeEnd)) {
+    const timeLabel = timeType === 'MORNING' ? 'дневному' : 'вечернему';
+    return {
+      status: 403,
+      message: `Посещение по ${timeLabel} тарифу недоступно в текущее время (${timeStart}-${timeEnd})`,
+    };
+  }
+
+  const hasUnlimited = visitsAmount === null;
+  if (hasUnlimited && guestCount > 0) {
+    return { status: 400, message: 'Безлимитный абонемент не позволяет приглашать гостей' };
+  }
+  if (!hasUnlimited) {
+    if (subscription.visitsBalance <= 0) {
+      return { status: 400, message: 'Недостаточно посещений на балансе' };
+    }
+    if (visitsDeducted > subscription.visitsBalance) {
+      return {
+        status: 400,
+        message: `Нельзя списать ${visitsDeducted} посещений — на балансе только ${subscription.visitsBalance}`,
+      };
+    }
+  }
+  return null;
+}
+
 export async function checkIn(req, res, next) {
   try {
-    const { visitsDeducted, guestCount, confirmDuplicate } = checkInSchema.parse(req.body);
+    const { sectionId, visitsDeducted, guestCount, confirmDuplicate } = checkInSchema.parse(req.body);
     const userId = req.userId;
 
-    const foundUser = await prisma.user.findUnique({ where: { id: userId } });
-    let user = foundUser;
+    const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user || !user.isActive) {
       return res.status(404).json({ message: 'Пользователь не найден' });
     }
 
-    if (!user.subscriptionEnd) {
-      return res.status(400).json({ message: 'У вас нет активного абонемента' });
+    const selected = await getSelectedSubscription(userId, sectionId);
+    if (selected.error) {
+      return res.status(selected.error.status).json(selected.error);
+    }
+    const subscription = selected.subscription;
+
+    const validationError = validateSubscriptionForCheckIn(subscription, visitsDeducted, guestCount);
+    if (validationError) {
+      return res.status(validationError.status).json({ message: validationError.message });
     }
 
-    if (user.frozenUntil && user.frozenUntil > new Date()) {
-      const until = user.frozenUntil.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
-      return res.status(400).json({ message: `Абонемент заморожен до ${until}` });
-    }
-
-    if (user.subscriptionEnd < new Date()) {
-      user = await clearExpiredVisits(prisma, user);
-      return res.status(400).json({ message: 'Срок абонемента истек' });
-    }
-
-    const [lastSale, lastVisit] = await Promise.all([
-      prisma.saleLog.findFirst({
-        where: { userId },
-        orderBy: { createdAt: 'desc' },
-        include: { tariff: true },
-      }),
-      prisma.visitLog.findFirst({
-        where: { userId },
-        orderBy: { createdAt: 'desc' },
-      }),
-    ]);
-
-    if (lastSale?.tariff) {
-      const { timeType, timeStart, timeEnd } = lastSale.tariff;
-      if (!isTimeAllowed(timeType, timeStart, timeEnd)) {
-        const timeLabel = timeType === 'MORNING' ? 'утреннему' : 'вечернему';
-        return res.status(403).json({
-          message: `Посещение по ${timeLabel} тарифу недоступно в текущее время (${timeStart}-${timeEnd})`,
-        });
-      }
-    }
-
-    const hasUnlimitedActive = lastSale?.tariff?.visitsAmount === null;
-    if (hasUnlimitedActive && guestCount > 0) {
-      return res.status(400).json({ message: 'Безлимитный абонемент не позволяет приглашать гостей' });
-    }
-
-    if (!hasUnlimitedActive) {
-      if (user.visitsBalance <= 0) {
-        return res.status(400).json({ message: 'Недостаточно посещений на балансе' });
-      }
-
-      if (visitsDeducted > user.visitsBalance) {
-        return res.status(400).json({
-          message: `Нельзя списать ${visitsDeducted} посещений — на балансе только ${user.visitsBalance}`,
-        });
-      }
-    }
+    const lastVisit = await prisma.visitLog.findFirst({
+      where: { userSubscriptionId: subscription.id },
+      orderBy: { createdAt: 'desc' },
+    });
 
     const duplicateVisitWarning = getDuplicateVisitWarning(lastVisit?.createdAt);
     if (duplicateVisitWarning && !confirmDuplicate) {
@@ -90,20 +129,28 @@ export async function checkIn(req, res, next) {
       });
     }
 
-    const [visitLog, updatedUser] = await prisma.$transaction(async (tx) => {
+    const hasUnlimited = subscription.tariff.visitsAmount === null;
+    const [visitLog, updatedSubscription] = await prisma.$transaction(async (tx) => {
       const log = await tx.visitLog.create({
-        data: { userId, visitsDeducted, guestCount },
+        data: {
+          userId,
+          sectionId: subscription.sectionId,
+          userSubscriptionId: subscription.id,
+          visitsDeducted,
+          guestCount,
+        },
         include: {
           user: { select: { id: true, firstName: true, lastName: true, phone: true } },
+          section: { select: { id: true, name: true } },
         },
       });
 
-      if (hasUnlimitedActive) {
-        return [log, user];
+      if (hasUnlimited) {
+        return [log, subscription];
       }
 
-      const updated = await tx.user.update({
-        where: { id: userId },
+      const updated = await tx.userSubscription.update({
+        where: { id: subscription.id },
         data: { visitsBalance: { decrement: visitsDeducted } },
       });
 
@@ -113,12 +160,14 @@ export async function checkIn(req, res, next) {
     emitNewVisit({
       ...visitLog,
       user: { id: user.id, firstName: user.firstName, lastName: user.lastName, phone: user.phone },
+      section: { id: subscription.section.id, name: subscription.section.name },
     });
 
     const guestsLabel = guestCount > 0 ? ` и ${guestCount} гост.` : '';
     res.json({
       message: `Списано ${visitsDeducted} посещ.${guestsLabel}`,
-      visitsBalance: updatedUser.visitsBalance,
+      visitsBalance: updatedSubscription.visitsBalance,
+      sectionId: subscription.sectionId,
       visitLog,
     });
   } catch (err) {
@@ -128,11 +177,12 @@ export async function checkIn(req, res, next) {
 
 export async function getVisitLogs(req, res, next) {
   try {
-    const { page, limit, from, to, userId } = logsQuerySchema.parse(req.query);
+    const { page, limit, from, to, userId, sectionId } = logsQuerySchema.parse(req.query);
     const skip = (page - 1) * limit;
 
     const where = {
       ...(userId && { userId }),
+      ...(sectionId && { sectionId }),
       ...(from || to
         ? {
             createdAt: {
@@ -149,7 +199,10 @@ export async function getVisitLogs(req, res, next) {
         skip,
         take: limit,
         orderBy: { createdAt: 'desc' },
-        include: { user: { select: { id: true, firstName: true, lastName: true, phone: true } } },
+        include: {
+          user: { select: { id: true, firstName: true, lastName: true, phone: true } },
+          section: { select: { id: true, name: true } },
+        },
       }),
       prisma.visitLog.count({ where }),
       prisma.visitLog.aggregate({ where, _sum: { visitsDeducted: true } }),
@@ -182,6 +235,7 @@ export async function getMyVisitLogs(req, res, next) {
         skip,
         take: limit,
         orderBy: { createdAt: 'desc' },
+        include: { section: { select: { id: true, name: true } } },
       }),
       prisma.visitLog.count({ where }),
     ]);
@@ -202,53 +256,43 @@ export async function getMyVisitLogs(req, res, next) {
 
 export async function adminCheckIn(req, res, next) {
   try {
-    const { userId, visitsDeducted } = adminCheckInSchema.parse(req.body);
+    const { userId, sectionId, visitsDeducted } = adminCheckInSchema.parse(req.body);
 
-    const foundUser = await prisma.user.findUnique({ where: { id: userId } });
-    let user = foundUser;
+    const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user || !user.isActive) {
       return res.status(404).json({ message: 'Пользователь не найден' });
     }
 
-    if (!user.subscriptionEnd) {
-      return res.status(400).json({ message: 'У клиента нет активного абонемента' });
+    const selected = await getSelectedSubscription(userId, sectionId);
+    if (selected.error) {
+      return res.status(selected.error.status).json(selected.error);
+    }
+    const subscription = selected.subscription;
+
+    const validationError = validateSubscriptionForCheckIn(subscription, visitsDeducted, 0);
+    if (validationError) {
+      return res.status(validationError.status).json({ message: validationError.message });
     }
 
-    if (user.subscriptionEnd < new Date()) {
-      user = await clearExpiredVisits(prisma, user);
-      return res.status(400).json({ message: 'Срок абонемента клиента истек' });
-    }
-
-    const lastSale = await prisma.saleLog.findFirst({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      include: { tariff: true },
-    });
-
-    const hasUnlimited = lastSale?.tariff?.visitsAmount === null;
-
-    if (!hasUnlimited) {
-      if (user.visitsBalance <= 0) {
-        return res.status(400).json({ message: 'Недостаточно посещений на балансе клиента' });
-      }
-      if (visitsDeducted > user.visitsBalance) {
-        return res.status(400).json({
-          message: `Нельзя списать ${visitsDeducted} посещений — на балансе только ${user.visitsBalance}`,
-        });
-      }
-    }
-
+    const hasUnlimited = subscription.tariff.visitsAmount === null;
     const [visitLog] = await prisma.$transaction(async (tx) => {
       const log = await tx.visitLog.create({
-        data: { userId, visitsDeducted, guestCount: 0 },
+        data: {
+          userId,
+          sectionId: subscription.sectionId,
+          userSubscriptionId: subscription.id,
+          visitsDeducted,
+          guestCount: 0,
+        },
         include: {
           user: { select: { id: true, firstName: true, lastName: true, phone: true } },
+          section: { select: { id: true, name: true } },
         },
       });
 
       if (!hasUnlimited) {
-        await tx.user.update({
-          where: { id: userId },
+        await tx.userSubscription.update({
+          where: { id: subscription.id },
           data: { visitsBalance: { decrement: visitsDeducted } },
         });
       }
@@ -257,7 +301,11 @@ export async function adminCheckIn(req, res, next) {
         adminId: req.userId,
         targetUserId: userId,
         action: 'ADMIN_VISIT_CHECKIN',
-        details: { visitsDeducted, userName: `${user.firstName} ${user.lastName}` },
+        details: {
+          visitsDeducted,
+          userName: `${user.firstName} ${user.lastName}`,
+          sectionName: subscription.section.name,
+        },
       });
 
       return [log];
@@ -266,6 +314,7 @@ export async function adminCheckIn(req, res, next) {
     emitNewVisit({
       ...visitLog,
       user: { id: user.id, firstName: user.firstName, lastName: user.lastName, phone: user.phone },
+      section: { id: subscription.section.id, name: subscription.section.name },
     });
 
     res.json({ message: `Списано ${visitsDeducted} посещ. (администратором)`, visitLog });

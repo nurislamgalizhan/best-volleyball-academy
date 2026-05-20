@@ -34,19 +34,36 @@ async function main() {
 
   console.log('✅ Admin:', admin.phone);
 
+  const defaultSection = await prisma.section.upsert({
+    where: { name: 'Тренажерный зал' },
+    update: { isActive: true, sortOrder: 0 },
+    create: { name: 'Тренажерный зал', sortOrder: 0 },
+  });
+
+  await prisma.tariff.updateMany({
+    where: { name: 'Утренний — 8 посещений' },
+    data: { name: 'Дневной — 8 посещений', sectionId: defaultSection.id },
+  });
+  await prisma.tariff.updateMany({
+    where: { name: 'Утренний — 12 посещений' },
+    data: { name: 'Дневной — 12 посещений', sectionId: defaultSection.id },
+  });
+
   const tariffs = [
-    { name: 'Утренний — 8 посещений',  visitsAmount: 8,    durationDays: 30, price: 12000, timeType: 'MORNING', timeStart: '07:00', timeEnd: '14:00' },
-    { name: 'Утренний — 12 посещений', visitsAmount: 12,   durationDays: 30, price: 16000, timeType: 'MORNING', timeStart: '07:00', timeEnd: '14:00' },
-    { name: 'Вечерний — 8 посещений',  visitsAmount: 8,    durationDays: 30, price: 14000, timeType: 'EVENING', timeStart: '17:00', timeEnd: '22:00' },
-    { name: 'Вечерний — 12 посещений', visitsAmount: 12,   durationDays: 30, price: 18000, timeType: 'EVENING', timeStart: '17:00', timeEnd: '22:00' },
-    { name: 'Безлимит — Любое время',  visitsAmount: null, durationDays: 30, price: 25000, timeType: 'ANY' },
-    { name: 'Разовое посещение',       visitsAmount: 1,    durationDays: 1,  price: 2500,  timeType: 'ANY' },
+    { sectionId: defaultSection.id, name: 'Дневной — 8 посещений',   visitsAmount: 8,    durationDays: 30, price: 12000, timeType: 'MORNING', timeStart: '07:00', timeEnd: '14:00' },
+    { sectionId: defaultSection.id, name: 'Дневной — 12 посещений',  visitsAmount: 12,   durationDays: 30, price: 16000, timeType: 'MORNING', timeStart: '07:00', timeEnd: '14:00' },
+    { sectionId: defaultSection.id, name: 'Вечерний — 8 посещений',  visitsAmount: 8,    durationDays: 30, price: 14000, timeType: 'EVENING', timeStart: '17:00', timeEnd: '22:00' },
+    { sectionId: defaultSection.id, name: 'Вечерний — 12 посещений', visitsAmount: 12,   durationDays: 30, price: 18000, timeType: 'EVENING', timeStart: '17:00', timeEnd: '22:00' },
+    { sectionId: defaultSection.id, name: 'Безлимит — Любое время',  visitsAmount: null, durationDays: 30, price: 25000, timeType: 'ANY' },
+    { sectionId: defaultSection.id, name: 'Разовое посещение',       visitsAmount: 1,    durationDays: 1,  price: 2500,  timeType: 'ANY' },
   ];
 
   for (const t of tariffs) {
     const existing = await prisma.tariff.findFirst({ where: { name: t.name } });
     if (!existing) {
       await prisma.tariff.create({ data: t });
+    } else if (!existing.sectionId) {
+      await prisma.tariff.update({ where: { id: existing.id }, data: { sectionId: defaultSection.id } });
     }
   }
   console.log('✅ Тарифы готовы');

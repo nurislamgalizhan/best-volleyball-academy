@@ -1,72 +1,36 @@
 import { useMemo, useState } from 'react';
-import toast from 'react-hot-toast';
-import { format, differenceInDays, isPast, addDays } from 'date-fns';
+import { differenceInDays, format, isPast } from 'date-fns';
 import { ru } from 'date-fns/locale';
+import toast from 'react-hot-toast';
 import api from '../../api/axios.js';
-import { useAuth } from '../../context/AuthContext.jsx';
-import Modal from '../../components/ui/Modal.jsx';
 import Button from '../../components/ui/Button.jsx';
-
-function toLocalDateStr(date) {
-  const d = new Date(date);
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 10);
-}
+import Modal from '../../components/ui/Modal.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
 
 export default function VisitorHome() {
   const { user, refreshUser } = useAuth();
+  const activeSubscriptions = user?.activeSubscriptions || [];
+  const [selectedSubscriptionId, setSelectedSubscriptionId] = useState('');
   const [guestCount, setGuestCount] = useState(0);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [duplicateWarning, setDuplicateWarning] = useState('');
-  const [freezeOpen, setFreezeOpen] = useState(false);
-  const [freezeLoading, setFreezeLoading] = useState(false);
-  const [freezeForm, setFreezeForm] = useState({ from: '', to: '' });
 
-  const currentTariff = user?.currentTariff || null;
-  const subscriptionActive = user?.subscriptionEnd && !isPast(new Date(user.subscriptionEnd));
-  const isUnlimited = Boolean(user?.isUnlimitedSubscription || currentTariff?.visitsAmount === null);
-  const isFrozen = Boolean(user?.frozenUntil && !isPast(new Date(user.frozenUntil)));
-  const isSingleVisit = Boolean(user?.isSingleVisitTariff);
-  const daysLeft = user?.subscriptionEnd
-    ? Math.max(0, differenceInDays(new Date(user.subscriptionEnd), new Date()))
+  const selectedSubscription = useMemo(() => {
+    if (activeSubscriptions.length === 1) return activeSubscriptions[0];
+    return activeSubscriptions.find((s) => s.id === Number(selectedSubscriptionId)) || activeSubscriptions[0] || null;
+  }, [activeSubscriptions, selectedSubscriptionId]);
+
+  const selectedTariff = selectedSubscription?.tariff || null;
+  const subscriptionActive = Boolean(selectedSubscription && !isPast(new Date(selectedSubscription.subscriptionEnd)));
+  const isUnlimited = selectedTariff?.visitsAmount === null;
+  const isFrozen = Boolean(selectedSubscription?.frozenUntil && !isPast(new Date(selectedSubscription.frozenUntil)));
+  const daysLeft = selectedSubscription?.subscriptionEnd
+    ? Math.max(0, differenceInDays(new Date(selectedSubscription.subscriptionEnd), new Date()))
     : 0;
-
   const totalVisitsToDeduct = useMemo(() => 1 + guestCount, [guestCount]);
-  const canCheckIn = !isFrozen && (isUnlimited ? Boolean(subscriptionActive) : Boolean(user?.visitsBalance > 0 && subscriptionActive));
-  const canFreeze = Boolean(subscriptionActive && !isFrozen && !isSingleVisit);
-  const maxGuests = Math.max(0, (user?.visitsBalance ?? 1) - 1);
-
-  const openFreezeModal = () => {
-    const today = toLocalDateStr(new Date());
-    const maxTo = user?.subscriptionEnd
-      ? toLocalDateStr(new Date(Math.min(
-          new Date(user.subscriptionEnd).getTime(),
-          addDays(new Date(), 15).getTime()
-        )))
-      : toLocalDateStr(addDays(new Date(), 15));
-    setFreezeForm({ from: today, to: maxTo });
-    setFreezeOpen(true);
-  };
-
-  const handleFreeze = async (e) => {
-    e.preventDefault();
-    setFreezeLoading(true);
-    try {
-      await api.post(`/users/${user.id}/freeze`, {
-        freezeFrom: new Date(freezeForm.from).toISOString(),
-        freezeTo: new Date(freezeForm.to).toISOString(),
-      });
-      const days = Math.ceil((new Date(freezeForm.to) - new Date(freezeForm.from)) / 86400000);
-      toast.success(`Абонемент заморожен на ${days} дн.`);
-      setFreezeOpen(false);
-      await refreshUser();
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Ошибка заморозки');
-    } finally {
-      setFreezeLoading(false);
-    }
-  };
+  const maxGuests = Math.max(0, (selectedSubscription?.visitsBalance ?? 1) - 1);
+  const canCheckIn = !isFrozen && (isUnlimited ? subscriptionActive : Boolean(selectedSubscription?.visitsBalance > 0 && subscriptionActive));
 
   const resetVisitFlow = () => {
     setConfirmOpen(false);
@@ -74,12 +38,24 @@ export default function VisitorHome() {
     setGuestCount(0);
   };
 
+  const handleSelectSubscription = (subscriptionId) => {
+    setSelectedSubscriptionId(String(subscriptionId));
+    setGuestCount(0);
+    setDuplicateWarning('');
+  };
+
   const submitCheckIn = async (confirmDuplicate = false) => {
+    if (!selectedSubscription) {
+      toast.error('Нет активного абонемента');
+      return;
+    }
+
     setLoading(true);
     try {
       const { data } = await api.post('/visits/checkin', {
-        visitsDeducted: totalVisitsToDeduct,
-        guestCount,
+        sectionId: selectedSubscription.sectionId,
+        visitsDeducted: isUnlimited ? 1 : totalVisitsToDeduct,
+        guestCount: isUnlimited ? 0 : guestCount,
         confirmDuplicate,
       });
       toast.success(data.message);
@@ -97,48 +73,62 @@ export default function VisitorHome() {
     }
   };
 
-  const todayStr = toLocalDateStr(new Date());
-  const maxFreezeToStr = user?.subscriptionEnd
-    ? toLocalDateStr(new Date(Math.min(
-        new Date(user.subscriptionEnd).getTime(),
-        addDays(new Date(freezeForm.from || new Date()), 15).getTime()
-      )))
-    : toLocalDateStr(addDays(new Date(freezeForm.from || new Date()), 15));
-
-  const freezeDaysSelected = freezeForm.from && freezeForm.to
-    ? Math.ceil((new Date(freezeForm.to) - new Date(freezeForm.from)) / 86400000)
-    : 0;
-
   return (
     <div className="space-y-6">
+      {activeSubscriptions.length > 1 && (
+        <div className="bg-white rounded-2xl border border-slate-100 p-4">
+          <p className="text-sm font-medium text-slate-700 mb-3">Выберите секцию</p>
+          <div className="flex flex-wrap gap-2">
+            {activeSubscriptions.map((subscription) => (
+              <button
+                key={subscription.id}
+                type="button"
+                onClick={() => handleSelectSubscription(subscription.id)}
+                className={`px-3 py-2 rounded-xl border text-sm font-medium transition-colors ${
+                  selectedSubscription?.id === subscription.id
+                    ? 'bg-brand-50 border-brand-500 text-brand-700'
+                    : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                {subscription.section?.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="bg-gradient-to-br from-brand-600 to-brand-800 rounded-3xl p-8 text-white text-center shadow-lg">
         <p className="text-brand-200 text-sm font-medium mb-2">Ваш баланс</p>
-        {isUnlimited ? (
-          <p className="text-6xl font-black">∞</p>
+        {selectedSubscription ? (
+          isUnlimited ? (
+            <p className="text-6xl font-black">∞</p>
+          ) : (
+            <p className="text-6xl font-black">{selectedSubscription.visitsBalance ?? 0}</p>
+          )
         ) : (
-          <p className="text-6xl font-black">{user?.visitsBalance ?? 0}</p>
+          <p className="text-6xl font-black">0</p>
         )}
         <p className="text-brand-200 mt-2 text-sm">
           {isUnlimited ? 'Безлимитный абонемент' : 'посещений'}
         </p>
 
-        {user?.subscriptionEnd && (
+        {selectedSubscription?.subscriptionEnd && (
           <div className="mt-5 pt-5 border-t border-brand-500">
             {isFrozen ? (
               <>
                 <p className="text-blue-200 text-xs font-medium">Абонемент заморожен</p>
                 <p className="text-white font-semibold mt-0.5">
-                  до {format(new Date(user.frozenUntil), 'd MMMM yyyy', { locale: ru })}
+                  до {format(new Date(selectedSubscription.frozenUntil), 'd MMMM yyyy', { locale: ru })}
                 </p>
                 <p className="text-brand-300 text-xs mt-0.5">
-                  Действует до {format(new Date(user.subscriptionEnd), 'd MMMM yyyy', { locale: ru })}
+                  Действует до {format(new Date(selectedSubscription.subscriptionEnd), 'd MMMM yyyy', { locale: ru })}
                 </p>
               </>
             ) : subscriptionActive ? (
               <>
                 <p className="text-brand-200 text-xs">Действует до</p>
                 <p className="text-white font-semibold mt-0.5">
-                  {format(new Date(user.subscriptionEnd), 'd MMMM yyyy', { locale: ru })}
+                  {format(new Date(selectedSubscription.subscriptionEnd), 'd MMMM yyyy', { locale: ru })}
                 </p>
                 <p className="text-brand-300 text-xs mt-0.5">Осталось {daysLeft} дн.</p>
               </>
@@ -148,30 +138,34 @@ export default function VisitorHome() {
           </div>
         )}
 
-        {!user?.subscriptionEnd && user?.visitsBalance === 0 && (
+        {!selectedSubscription && (
           <p className="text-brand-300 text-sm mt-4">Нет активного абонемента</p>
         )}
       </div>
 
-      {currentTariff && (
+      {selectedSubscription && selectedTariff && (
         <div className="bg-white rounded-2xl border border-slate-100 p-6 space-y-3">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 className="font-semibold text-slate-900">{currentTariff.name}</h2>
+              <h2 className="font-semibold text-slate-900">{selectedTariff.name}</h2>
               <p className="text-sm text-slate-500 mt-1">Ваш текущий тариф</p>
             </div>
             <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700">
-              {currentTariff.visitsAmount === null ? 'Безлимит' : `${currentTariff.visitsAmount} посещ.`}
+              {selectedTariff.visitsAmount === null ? 'Безлимит' : `${selectedTariff.visitsAmount} посещ.`}
             </span>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+            <div className="rounded-xl bg-slate-50 p-3">
+              <p className="text-slate-500">Секция</p>
+              <p className="font-medium text-slate-900 mt-1">{selectedSubscription.section?.name}</p>
+            </div>
             <div className="rounded-xl bg-slate-50 p-3">
               <p className="text-slate-500">Окно посещения</p>
-              <p className="font-medium text-slate-900 mt-1">{currentTariff.accessLabel || 'Любое время'}</p>
+              <p className="font-medium text-slate-900 mt-1">{selectedTariff.accessLabel || 'Любое время'}</p>
             </div>
             <div className="rounded-xl bg-slate-50 p-3">
               <p className="text-slate-500">Срок действия</p>
-              <p className="font-medium text-slate-900 mt-1">{currentTariff.durationDays} дн.</p>
+              <p className="font-medium text-slate-900 mt-1">{selectedTariff.durationDays} дн.</p>
             </div>
           </div>
         </div>
@@ -247,7 +241,7 @@ export default function VisitorHome() {
         <div className="bg-blue-50 border border-blue-100 rounded-2xl p-5 text-center">
           <p className="text-blue-800 font-medium">Абонемент заморожен</p>
           <p className="text-blue-600 text-sm mt-1">
-            Заморозка действует до {format(new Date(user.frozenUntil), 'd MMMM yyyy', { locale: ru })}
+            Заморозка действует до {format(new Date(selectedSubscription.frozenUntil), 'd MMMM yyyy', { locale: ru })}
           </p>
         </div>
       )}
@@ -255,80 +249,12 @@ export default function VisitorHome() {
       {!canCheckIn && !isFrozen && (
         <div className="bg-amber-50 border border-amber-100 rounded-2xl p-5 text-center">
           <p className="text-amber-800 font-medium">
-            {!subscriptionActive && user?.subscriptionEnd ? 'Абонемент истек' : 'Нет доступных посещений'}
+            {selectedSubscription ? 'Нет доступных посещений' : 'Нет активного абонемента'}
           </p>
           <p className="text-amber-600 text-sm mt-1">Приобретите абонемент в разделе «Тарифы»</p>
         </div>
       )}
 
-      {canFreeze && (
-        <div className="bg-white rounded-2xl border border-slate-100 p-5">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="font-medium text-slate-800">Заморозка абонемента</p>
-              <p className="text-sm text-slate-500 mt-0.5">До 15 дней. Срок действия продлится автоматически.</p>
-            </div>
-            <Button variant="secondary" size="sm" onClick={openFreezeModal} className="flex-shrink-0">
-              Заморозить
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* Freeze modal */}
-      <Modal isOpen={freezeOpen} onClose={() => setFreezeOpen(false)} title="Заморозить абонемент">
-        <form onSubmit={handleFreeze} className="space-y-4">
-          <p className="text-sm text-slate-500">
-            Выберите период заморозки (максимум 15 дней). Срок абонемента продлится автоматически.
-          </p>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">С даты</label>
-              <input
-                type="date"
-                className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-                min={todayStr}
-                max={user?.subscriptionEnd ? toLocalDateStr(new Date(user.subscriptionEnd)) : undefined}
-                value={freezeForm.from}
-                onChange={(e) => setFreezeForm((f) => ({ ...f, from: e.target.value, to: '' }))}
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">По дату</label>
-              <input
-                type="date"
-                className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-                min={freezeForm.from || todayStr}
-                max={maxFreezeToStr}
-                value={freezeForm.to}
-                onChange={(e) => setFreezeForm((f) => ({ ...f, to: e.target.value }))}
-                required
-              />
-            </div>
-          </div>
-          {freezeDaysSelected > 0 && user?.subscriptionEnd && (
-            <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-sm text-blue-700">
-              Заморозка на <strong>{freezeDaysSelected} дн.</strong> — абонемент продлится до{' '}
-              <strong>
-                {format(
-                  new Date(new Date(user.subscriptionEnd).getTime() + freezeDaysSelected * 86400000),
-                  'd MMMM yyyy',
-                  { locale: ru }
-                )}
-              </strong>
-            </div>
-          )}
-          <div className="flex gap-3 pt-2">
-            <Button variant="secondary" type="button" onClick={() => setFreezeOpen(false)} className="flex-1">Отмена</Button>
-            <Button type="submit" loading={freezeLoading} className="flex-1" disabled={freezeDaysSelected <= 0}>
-              Заморозить
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* Check-in confirmation modal */}
       <Modal
         isOpen={confirmOpen}
         onClose={() => !loading && resetVisitFlow()}
@@ -340,12 +266,18 @@ export default function VisitorHome() {
             {duplicateWarning
               ? duplicateWarning
               : isUnlimited
-                ? 'Подтвердите посещение'
+                ? (
+                    <>
+                      Подтвердите посещение<br />
+                      <span className="text-sm text-slate-500">{selectedSubscription?.section?.name}</span>
+                    </>
+                  )
                 : (
                     <>
                       Подтвердите списание{' '}
                       <span className="font-bold text-slate-900 text-lg">{totalVisitsToDeduct}</span>{' '}
-                      посещ.
+                      посещ.<br />
+                      <span className="text-sm text-slate-500">{selectedSubscription?.section?.name}</span>
                     </>
                   )}
           </p>
