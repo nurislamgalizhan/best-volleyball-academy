@@ -1,0 +1,12 @@
+services:
+  frontend:
+    networks:
+      default:
+      mercury_proxy:
+        aliases:
+          - bva-frontend
+
+networks:
+  mercury_proxy:
+    external: true
+    name: mercury-medet-app_default

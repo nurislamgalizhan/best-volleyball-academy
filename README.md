@@ -25,6 +25,12 @@ docker compose up -d --build
 
 Backend при старте сам применяет Prisma migrations и seed через `backend/entrypoint.sh`.
 
+На сервере, где `mmedet.kz` уже занимает `80/443`, используйте дополнительный override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.server.yml up -d --build
+```
+
 ### 3. Проверка
 ```bash
 docker compose ps
