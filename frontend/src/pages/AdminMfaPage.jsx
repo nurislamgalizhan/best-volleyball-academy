@@ -68,20 +68,18 @@ export default function AdminMfaPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-brand-50 to-slate-100 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-neutral-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-brand-600 rounded-2xl mb-4 shadow-lg">
-            <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-            </svg>
+          <div className="inline-flex items-center justify-center w-14 h-14 bg-brand-900 rounded-2xl mb-4 shadow-lg">
+            <span className="text-white font-black text-lg">BVA</span>
           </div>
           <h1 className="text-2xl font-bold text-slate-900">Двухфакторная аутентификация</h1>
           <p className="text-slate-500 mt-2">Введите код из WhatsApp для входа в панель администратора</p>
-          {phone && <p className="text-brand-600 font-medium mt-1">{formatPhoneDisplay(phone)}</p>}
+          {phone && <p className="text-brand-700 font-medium mt-1">{formatPhoneDisplay(phone)}</p>}
         </div>
 
-        <form onSubmit={handleVerify} className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 space-y-5">
+        <form onSubmit={handleVerify} className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 space-y-5">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">Код подтверждения</label>
             <input
@@ -104,7 +102,7 @@ export default function AdminMfaPage() {
             type="button"
             onClick={handleResend}
             disabled={resending || timer > 0}
-            className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium text-brand-600 hover:bg-brand-50 disabled:text-slate-400 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
+            className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium text-brand-700 hover:bg-brand-50 disabled:text-slate-400 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
           >
             {resending
               ? 'Отправка...'

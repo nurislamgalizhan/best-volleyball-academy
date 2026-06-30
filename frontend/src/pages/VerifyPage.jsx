@@ -113,20 +113,18 @@ export default function VerifyPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-brand-50 to-slate-100 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-neutral-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-emerald-500 rounded-2xl mb-4 shadow-lg">
-            <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
-            </svg>
+          <div className="inline-flex items-center justify-center w-14 h-14 bg-brand-900 rounded-2xl mb-4 shadow-lg">
+            <span className="text-white font-black text-lg">BVA</span>
           </div>
-          <h1 className="text-2xl font-bold text-slate-900">Подтверждение</h1>
+          <h1 className="text-2xl font-bold text-slate-950">Подтверждение</h1>
           <p className="text-slate-500 mt-2">Введите код из WhatsApp</p>
-          {phone && <p className="text-brand-600 font-medium mt-1">{formatPhoneDisplay(phone)}</p>}
+          {phone && <p className="text-brand-700 font-medium mt-1">{formatPhoneDisplay(phone)}</p>}
         </div>
 
-        <form onSubmit={handleVerify} className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 space-y-5">
+        <form onSubmit={handleVerify} className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 space-y-5">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">Код подтверждения</label>
             <input
@@ -148,7 +146,7 @@ export default function VerifyPage() {
             type="button"
             onClick={handleResend}
             disabled={resending || timer > 0}
-            className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium text-brand-600 hover:bg-brand-50 disabled:text-slate-400 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
+            className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium text-brand-700 hover:bg-brand-50 disabled:text-slate-400 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
           >
             {resending
               ? 'Отправка...'

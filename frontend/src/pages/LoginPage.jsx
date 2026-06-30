@@ -8,21 +8,6 @@ import Input from '../components/ui/Input.jsx';
 import PhoneInput from '../components/ui/PhoneInput.jsx';
 import { isCompletePhone, toApiPhone } from '../utils/phone.js';
 
-const PENDING_VERIFICATION_PHONE_KEY = 'pendingVerificationPhone';
-const PENDING_VERIFICATION_COOLDOWN_KEY = 'pendingVerificationCooldownUntil';
-
-function persistVerificationCooldown(seconds) {
-  if ((seconds ?? 0) > 0) {
-    sessionStorage.setItem(
-      PENDING_VERIFICATION_COOLDOWN_KEY,
-      String(Date.now() + seconds * 1000)
-    );
-    return;
-  }
-
-  sessionStorage.setItem(PENDING_VERIFICATION_COOLDOWN_KEY, '0');
-}
-
 export default function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -52,7 +37,7 @@ export default function LoginPage() {
 
   const validate = () => {
     const nextErrors = {};
-    if (!isCompletePhone(form.phone)) nextErrors.phone = 'Введите номер в формате +7 (XXX) XXX-XX-XX';
+    if (!isCompletePhone(form.phone)) nextErrors.phone = 'Введите номер в формате +7 775 232 22 94';
     if (!form.password) nextErrors.password = 'Введите пароль';
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
@@ -89,24 +74,6 @@ export default function LoginPage() {
         return;
       }
 
-      if (data.requiresVerification && data.user.role !== 'ADMIN') {
-        const resendCooldown = data.resendCooldown ?? 60;
-        sessionStorage.setItem(PENDING_VERIFICATION_PHONE_KEY, data.user.phone || payload.phone);
-        persistVerificationCooldown(resendCooldown);
-        if (data.verificationDeliveryFailed) {
-          toast.error(data.message || 'Не удалось автоматически отправить код в WhatsApp');
-        } else {
-          toast.success(data.message || 'Код подтверждения отправлен в WhatsApp');
-        }
-        navigate('/verify', {
-          state: {
-            phone: data.user.phone || payload.phone,
-            resendCooldown,
-          },
-        });
-        return;
-      }
-
       login(data.token, data.user);
       toast.success(`Добро пожаловать, ${data.user.firstName}!`);
       navigate(data.user.role === 'ADMIN' ? '/admin' : '/visitor');
@@ -130,19 +97,17 @@ export default function LoginPage() {
   const isLocked = lockedUntil && Date.now() < lockedUntil;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-brand-50 to-slate-100 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-neutral-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-brand-600 rounded-2xl mb-4 shadow-lg">
-            <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
+          <div className="inline-flex items-center justify-center w-14 h-14 bg-brand-900 rounded-2xl mb-4 shadow-lg">
+            <span className="text-white font-black text-lg">BVA</span>
           </div>
-          <h1 className="text-2xl font-bold text-slate-900">Меркурий Медет</h1>
+          <h1 className="text-2xl font-bold text-slate-950">Best Volleyball Academy</h1>
           <p className="text-slate-500 mt-1">Войдите в свой аккаунт</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 space-y-4">
+        <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 space-y-4">
           {isLocked && (
             <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center text-sm text-red-700 font-medium">
               Слишком много попыток. Подождите {lockTimer} сек.
@@ -171,10 +136,10 @@ export default function LoginPage() {
           </Button>
 
           <div className="flex items-center justify-between text-sm">
-            <Link to="/forgot-password" className="text-brand-600 hover:underline">
+            <Link to="/forgot-password" className="text-brand-700 hover:underline">
               Забыли пароль?
             </Link>
-            <Link to="/register" className="text-brand-600 font-medium hover:underline">
+            <Link to="/register" className="text-brand-700 font-medium hover:underline">
               Зарегистрироваться
             </Link>
           </div>

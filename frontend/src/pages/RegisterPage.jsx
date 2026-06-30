@@ -40,7 +40,7 @@ export default function RegisterPage() {
     else if (!NAME_REGEX.test(form.lastName)) nextErrors.lastName = 'Только буквы, пробел и дефис';
     else if (form.lastName.length > 200) nextErrors.lastName = 'Максимум 200 символов';
 
-    if (!isCompletePhone(form.phone)) nextErrors.phone = 'Введите номер в формате +7 (XXX) XXX-XX-XX';
+    if (!isCompletePhone(form.phone)) nextErrors.phone = 'Введите номер в формате +7 775 232 22 94';
     if (form.password.length < 6) nextErrors.password = 'Минимум 6 символов';
     else if (form.password.length > 200) nextErrors.password = 'Максимум 200 символов';
     if (form.password !== form.confirm) nextErrors.confirm = 'Пароли не совпадают';
@@ -83,19 +83,17 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-brand-50 to-slate-100 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-neutral-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-brand-600 rounded-2xl mb-4 shadow-lg">
-            <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
+          <div className="inline-flex items-center justify-center w-14 h-14 bg-brand-900 rounded-2xl mb-4 shadow-lg">
+            <span className="text-white font-black text-lg">BVA</span>
           </div>
-          <h1 className="text-2xl font-bold text-slate-900">Регистрация</h1>
-          <p className="text-slate-500 mt-1">Меркурий Медет</p>
+          <h1 className="text-2xl font-bold text-slate-950">Регистрация</h1>
+          <p className="text-slate-500 mt-1">Best Volleyball Academy</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 space-y-4">
+        <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <Input
               label="Имя"
@@ -146,7 +144,7 @@ export default function RegisterPage() {
 
           <p className="text-center text-sm text-slate-500">
             Уже есть аккаунт?{' '}
-            <Link to="/login" className="text-brand-600 font-medium hover:underline">
+            <Link to="/login" className="text-brand-700 font-medium hover:underline">
               Войти
             </Link>
           </p>

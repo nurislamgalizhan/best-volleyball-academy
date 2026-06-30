@@ -135,13 +135,14 @@ export default function TariffsAdminPage() {
   };
 
   const handleSectionDeactivate = async (section) => {
-    if (!confirm(`Деактивировать секцию "${section.name}"?`)) return;
+    if (!confirm(`Выключить секцию "${section.name}"? Она пропадет из продажи и выбора новых тарифов. Уже проданные абонементы и история сохранятся.`)) return;
     await deactivateSection(section.id);
     toast.success('Секция деактивирована');
     fetchSections();
   };
 
   const handleSectionActivate = async (section) => {
+    if (!confirm(`Включить секцию "${section.name}"? Она снова появится в продаже и фильтрах.`)) return;
     await activateSection(section.id);
     toast.success('Секция восстановлена');
     fetchSections();
@@ -155,7 +156,7 @@ export default function TariffsAdminPage() {
         <span className="text-xs font-medium px-2.5 py-1 rounded-full border bg-slate-50 text-slate-600 border-slate-100">
           {t.section?.name}
         </span>
-        <span className="text-xs font-medium px-2.5 py-1 rounded-full border bg-blue-50 text-blue-700 border-blue-100">
+        <span className="text-xs font-medium px-2.5 py-1 rounded-full border bg-slate-100 text-slate-700 border-slate-200">
           {TIME_TYPE_LABEL[t.timeType]}{t.timeStart && ` · ${t.timeStart}–${t.timeEnd}`}
         </span>
       </div>
@@ -196,19 +197,6 @@ export default function TariffsAdminPage() {
             </button>
           ))}
         </div>
-        <div className="flex flex-wrap gap-2">
-          {sections.map((section) => (
-            <div key={section.id} className="flex items-center gap-2 text-xs rounded-full bg-slate-50 px-3 py-1.5 text-slate-500">
-              <span>{section.name}</span>
-              <button onClick={() => openSectionEdit(section)} className="text-brand-600">изменить</button>
-              {section.isActive ? (
-                <button onClick={() => handleSectionDeactivate(section)} className="text-red-500">выкл.</button>
-              ) : (
-                <button onClick={() => handleSectionActivate(section)} className="text-emerald-600">вкл.</button>
-              )}
-            </div>
-          ))}
-        </div>
       </div>
 
       <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-fit mb-6">
@@ -227,6 +215,31 @@ export default function TariffsAdminPage() {
         ) : (
           (tab === 'active' ? activeTariffs : archivedTariffs).map(renderTariffCard)
         )}
+      </div>
+
+      <div className="mt-10 bg-white rounded-2xl border border-slate-100 p-4">
+        <h2 className="font-semibold text-slate-800 mb-1">Управление секциями</h2>
+        <p className="text-sm text-slate-500 mb-4">Выключение секции скрывает ее из новых продаж, но не удаляет историю.</p>
+        <div className="divide-y divide-slate-50">
+          {sections.map((section) => (
+            <div key={section.id} className="py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <p className="font-medium text-slate-800">{section.name}</p>
+                <p className={`text-xs mt-0.5 ${section.isActive ? 'text-emerald-600' : 'text-slate-400'}`}>
+                  {section.isActive ? 'Активна' : 'Выключена'}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <Button size="sm" variant="secondary" onClick={() => openSectionEdit(section)}>Изменить</Button>
+                {section.isActive ? (
+                  <Button size="sm" variant="danger" onClick={() => handleSectionDeactivate(section)}>Выключить</Button>
+                ) : (
+                  <Button size="sm" variant="success" onClick={() => handleSectionActivate(section)}>Включить</Button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <Modal isOpen={modalOpen} onClose={() => setModalOpen(false)} title={editing ? 'Редактировать тариф' : 'Новый тариф'}>

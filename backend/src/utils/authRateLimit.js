@@ -3,8 +3,8 @@ const WINDOW_MS = 15 * 60 * 1000;
 
 const attempts = new Map();
 
-function getKey(ip, phone) {
-  return `${ip || 'unknown'}:${phone || 'unknown'}`;
+function getKey(ip, identifier) {
+  return `${ip || 'unknown'}:${identifier || 'unknown'}`;
 }
 
 function getRecord(key) {
@@ -19,8 +19,8 @@ function getRecord(key) {
   return current;
 }
 
-export function getRateLimitState(ip, phone) {
-  const key = getKey(ip, phone);
+export function getRateLimitState(ip, identifier) {
+  const key = getKey(ip, identifier);
   const current = getRecord(key);
 
   if (current.count < MAX_ATTEMPTS) {
@@ -33,8 +33,8 @@ export function getRateLimitState(ip, phone) {
   };
 }
 
-export function registerFailedAttempt(ip, phone) {
-  const key = getKey(ip, phone);
+export function registerFailedAttempt(ip, identifier) {
+  const key = getKey(ip, identifier);
   const current = getRecord(key);
 
   attempts.set(key, {
@@ -43,6 +43,6 @@ export function registerFailedAttempt(ip, phone) {
   });
 }
 
-export function clearFailedAttempts(ip, phone) {
-  attempts.delete(getKey(ip, phone));
+export function clearFailedAttempts(ip, identifier) {
+  attempts.delete(getKey(ip, identifier));
 }

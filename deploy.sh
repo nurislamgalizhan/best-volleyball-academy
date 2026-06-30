@@ -1,15 +1,21 @@
 #!/bin/bash
 # ============================================================
-# Mercury Medet CRM — Deploy Script
+# Best Volleyball Academy CRM — Deploy Script
 # ============================================================
 set -e
 
-echo "🚀 Mercury Medet — Деплой"
+echo "🚀 Best Volleyball Academy — Деплой"
 
 # 1. Проверка .env
 if [ ! -f ".env" ]; then
   echo "❌ Файл .env не найден!"
   echo "   Выполните: cp .env.example .env  и заполните переменные"
+  exit 1
+fi
+
+if [ -f "backend/.env" ]; then
+  echo "❌ Найден лишний backend/.env"
+  echo "   В Docker-сценарии используется только корневой .env. Удалите backend/.env."
   exit 1
 fi
 
@@ -20,6 +26,8 @@ MISSING=()
 [ -z "$ADMIN_PHONE" ]       && MISSING+=("ADMIN_PHONE")
 [ -z "$ADMIN_PASSWORD" ]    && MISSING+=("ADMIN_PASSWORD")
 [ -z "$DB_PASSWORD" ]       && MISSING+=("DB_PASSWORD")
+[ -z "$GREEN_API_ID_INSTANCE" ]    && MISSING+=("GREEN_API_ID_INSTANCE")
+[ -z "$GREEN_API_TOKEN_INSTANCE" ] && MISSING+=("GREEN_API_TOKEN_INSTANCE")
 
 if [ ${#MISSING[@]} -gt 0 ]; then
   echo "❌ Не заполнены обязательные переменные в .env:"
@@ -48,7 +56,7 @@ sleep 10
 echo ""
 echo "✅ Деплой завершён!"
 echo ""
-echo "   Приложение доступно на порту: ${APP_PORT:-80}"
+echo "   Приложение доступно локально: ${APP_HOST:-127.0.0.1}:${APP_PORT:-8081}"
 echo "   Логи backend:  docker compose logs -f backend"
 echo "   Логи frontend: docker compose logs -f frontend"
 echo ""

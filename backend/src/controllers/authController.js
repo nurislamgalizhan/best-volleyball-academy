@@ -18,6 +18,9 @@ import {
 } from '../utils/authRateLimit.js';
 import { buildUserProfile } from '../utils/userProfile.js';
 
+const CODE_TTL_MS = 10 * 60 * 1000;
+const RESEND_COOLDOWN_SECONDS = 60;
+
 function signToken(user) {
   return jwt.sign(
     { userId: user.id, role: user.role },
@@ -28,14 +31,14 @@ function signToken(user) {
 
 function checkResendCooldown(verificationCodeExpires) {
   if (!verificationCodeExpires) return null;
-  const sentAt = new Date(verificationCodeExpires.getTime() - 10 * 60 * 1000);
-  const secondsLeft = Math.ceil((sentAt.getTime() + 60 * 1000 - Date.now()) / 1000);
+  const sentAt = new Date(verificationCodeExpires.getTime() - CODE_TTL_MS);
+  const secondsLeft = Math.ceil((sentAt.getTime() + RESEND_COOLDOWN_SECONDS * 1000 - Date.now()) / 1000);
   return secondsLeft > 0 ? secondsLeft : null;
 }
 
 async function issueCodeToAttempt(attemptId, phone, context) {
   const code = generateVerificationCode();
-  const expires = new Date(Date.now() + 10 * 60 * 1000);
+  const expires = new Date(Date.now() + CODE_TTL_MS);
 
   const updated = await prisma.registrationAttempt.update({
     where: { id: attemptId },
@@ -44,9 +47,9 @@ async function issueCodeToAttempt(attemptId, phone, context) {
 
   try {
     await sendVerificationCode(phone, code);
-    return { ok: true, attempt: updated, resendCooldown: 60 };
+    return { ok: true, attempt: updated, resendCooldown: RESEND_COOLDOWN_SECONDS };
   } catch (err) {
-    console.error(`[${context}] WhatsApp error:`, err.message);
+    console.error(`[${context}] Green API error:`, err.message);
     await prisma.registrationAttempt.update({
       where: { id: attemptId },
       data: { verificationCode: null, verificationCodeExpires: null },
@@ -57,7 +60,7 @@ async function issueCodeToAttempt(attemptId, phone, context) {
 
 async function issueCodeToUser(userId, phone, context) {
   const code = generateVerificationCode();
-  const expires = new Date(Date.now() + 10 * 60 * 1000);
+  const expires = new Date(Date.now() + CODE_TTL_MS);
 
   const updated = await prisma.user.update({
     where: { id: userId },
@@ -66,9 +69,9 @@ async function issueCodeToUser(userId, phone, context) {
 
   try {
     await sendVerificationCode(phone, code);
-    return { ok: true, user: updated, resendCooldown: 60 };
+    return { ok: true, user: updated, resendCooldown: RESEND_COOLDOWN_SECONDS };
   } catch (err) {
-    console.error(`[${context}] WhatsApp error:`, err.message);
+    console.error(`[${context}] Green API error:`, err.message);
     await prisma.user.update({
       where: { id: userId },
       data: { verificationCode: null, verificationCodeExpires: null },
@@ -77,19 +80,41 @@ async function issueCodeToUser(userId, phone, context) {
   }
 }
 
-// ─── REGISTER ────────────────────────────────────────────────────────────────
-// Saves to RegistrationAttempt (NOT User) until phone is verified
+async function buildAdminMfaResponse(user, context) {
+  const secondsLeft = checkResendCooldown(user.verificationCodeExpires);
+  let resendCooldown = secondsLeft ?? 0;
+  let deliveryFailed = false;
+  let message = '';
+
+  if (secondsLeft) {
+    message = `Код уже отправлен. Повторите через ${secondsLeft} сек.`;
+  } else {
+    const result = await issueCodeToUser(user.id, user.phone, context);
+    deliveryFailed = !result.ok;
+    resendCooldown = result.ok ? result.resendCooldown : 0;
+    message = result.ok
+      ? 'Код подтверждения отправлен в WhatsApp.'
+      : 'Не удалось отправить код в WhatsApp. Нажмите "Отправить повторно".';
+  }
+
+  return {
+    requiresAdminMfa: true,
+    phone: user.phone,
+    resendCooldown,
+    deliveryFailed,
+    message,
+  };
+}
+
 export async function register(req, res, next) {
   try {
     const { firstName, lastName, phone, password } = registerSchema.parse(req.body);
 
-    // Verified user with this phone already exists
     const existingUser = await prisma.user.findUnique({ where: { phone } });
     if (existingUser?.isVerified) {
       return res.status(409).json({ message: 'Пользователь с таким номером уже существует' });
     }
 
-    // Cleanup stale expired attempts
     await prisma.registrationAttempt.deleteMany({
       where: {
         phone,
@@ -98,8 +123,6 @@ export async function register(req, res, next) {
     });
 
     const passwordHash = await bcrypt.hash(password, 12);
-
-    // Upsert registration attempt (not User table)
     const attempt = await prisma.registrationAttempt.upsert({
       where: { phone },
       update: { passwordHash, firstName, lastName, verificationCode: null, verificationCodeExpires: null },
@@ -122,8 +145,6 @@ export async function register(req, res, next) {
   }
 }
 
-// ─── VERIFY PHONE ─────────────────────────────────────────────────────────────
-// Validates code from RegistrationAttempt, creates User on success
 export async function verifyPhone(req, res, next) {
   try {
     const { phone, code } = verifyCodeSchema.parse(req.body);
@@ -139,7 +160,6 @@ export async function verifyPhone(req, res, next) {
       return res.status(400).json({ message: 'Срок действия кода истек. Запросите новый.' });
     }
 
-    // Create verified user + delete attempt atomically
     const user = await prisma.$transaction(async (tx) => {
       const created = await tx.user.create({
         data: {
@@ -162,8 +182,6 @@ export async function verifyPhone(req, res, next) {
   }
 }
 
-// ─── RESEND CODE ──────────────────────────────────────────────────────────────
-// Works for RegistrationAttempt (new registration flow)
 export async function resendCode(req, res, next) {
   try {
     const { phone } = resendCodeSchema.parse(req.body);
@@ -191,7 +209,6 @@ export async function resendCode(req, res, next) {
   }
 }
 
-// ─── LOGIN ────────────────────────────────────────────────────────────────────
 export async function login(req, res, next) {
   try {
     const { phone, password } = loginSchema.parse(req.body);
@@ -217,34 +234,10 @@ export async function login(req, res, next) {
 
     clearFailedAttempts(req.ip, phone);
 
-    // ── Admin 2FA: always require WhatsApp code ──────────────────────────────
     if (user.role === 'ADMIN') {
-      const secondsLeft = checkResendCooldown(user.verificationCodeExpires);
-      let resendCooldown = secondsLeft ?? 0;
-      let deliveryFailed = false;
-      let message = '';
-
-      if (secondsLeft) {
-        message = `Код уже отправлен. Повторите через ${secondsLeft} сек.`;
-      } else {
-        const result = await issueCodeToUser(user.id, phone, 'AdminLogin');
-        deliveryFailed = !result.ok;
-        resendCooldown = result.ok ? result.resendCooldown : 0;
-        message = result.ok
-          ? 'Код подтверждения отправлен в WhatsApp.'
-          : 'Не удалось отправить код в WhatsApp. Нажмите "Отправить повторно".';
-      }
-
-      return res.json({
-        requiresAdminMfa: true,
-        phone: user.phone,
-        resendCooldown,
-        deliveryFailed,
-        message,
-      });
+      return res.json(await buildAdminMfaResponse(user, 'AdminLogin'));
     }
 
-    // ── Regular visitor ─────────────────────────────────────────────────────
     const token = signToken(user);
     const profile = await buildUserProfile(user);
     res.json({ token, user: profile });
@@ -253,8 +246,6 @@ export async function login(req, res, next) {
   }
 }
 
-// ─── ADMIN MFA VERIFY ─────────────────────────────────────────────────────────
-// Second step of admin login: validate WhatsApp code → return token
 export async function adminMfaVerify(req, res, next) {
   try {
     const { phone, code } = verifyCodeSchema.parse(req.body);
@@ -284,7 +275,6 @@ export async function adminMfaVerify(req, res, next) {
   }
 }
 
-// ─── ADMIN MFA RESEND ─────────────────────────────────────────────────────────
 export async function adminMfaResend(req, res, next) {
   try {
     const { phone } = resendCodeSchema.parse(req.body);
@@ -310,7 +300,6 @@ export async function adminMfaResend(req, res, next) {
   }
 }
 
-// ─── GET ME ───────────────────────────────────────────────────────────────────
 export async function getMe(req, res, next) {
   try {
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
@@ -322,7 +311,6 @@ export async function getMe(req, res, next) {
   }
 }
 
-// ─── FORGOT PASSWORD ──────────────────────────────────────────────────────────
 export async function forgotPassword(req, res, next) {
   try {
     const { phone } = resendCodeSchema.parse(req.body);
@@ -350,7 +338,6 @@ export async function forgotPassword(req, res, next) {
   }
 }
 
-// ─── CHANGE PASSWORD (authenticated) ─────────────────────────────────────────
 export async function changePassword(req, res, next) {
   try {
     const { currentPassword, newPassword } = req.body;
@@ -376,20 +363,19 @@ export async function changePassword(req, res, next) {
   }
 }
 
-// ─── RESET PASSWORD ───────────────────────────────────────────────────────────
 export async function resetPassword(req, res, next) {
   try {
-    const { phone, code, newPassword } = req.body;
+    const { phone, code } = verifyCodeSchema.parse(req.body);
+    const { newPassword } = req.body;
 
-    if (!phone || !code || !newPassword) {
+    if (!newPassword) {
       return res.status(400).json({ message: 'Заполните все поля' });
     }
     if (newPassword.length < 6 || newPassword.length > 200) {
       return res.status(400).json({ message: 'Пароль должен быть от 6 до 200 символов' });
     }
 
-    const normalizedPhone = resendCodeSchema.parse({ phone }).phone;
-    const user = await prisma.user.findUnique({ where: { phone: normalizedPhone } });
+    const user = await prisma.user.findUnique({ where: { phone } });
     if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
 
     if (!user.verificationCode || user.verificationCode !== code) {
@@ -406,7 +392,7 @@ export async function resetPassword(req, res, next) {
       data: { passwordHash, verificationCode: null, verificationCodeExpires: null },
     });
 
-    clearFailedAttempts(req.ip, normalizedPhone);
+    clearFailedAttempts(req.ip, phone);
     res.json({ message: 'Пароль успешно изменен. Войдите с новым паролем.' });
   } catch (err) {
     next(err);

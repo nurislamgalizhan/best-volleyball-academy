@@ -29,7 +29,7 @@ export default function ForgotPasswordPage() {
   const handleSendCode = async (event) => {
     event.preventDefault();
     if (!isCompletePhone(phone)) {
-      setPhoneError('Введите номер в формате +7 (XXX) XXX-XX-XX');
+      setPhoneError('Введите номер в формате +7 775 232 22 94');
       return;
     }
 
@@ -38,7 +38,7 @@ export default function ForgotPasswordPage() {
     setLoading(true);
     try {
       await api.post('/auth/forgot-password', { phone: apiPhone });
-      toast.success('Код отправлен в WhatsApp');
+      toast.success('Если номер зарегистрирован, код отправлен в WhatsApp');
       setStep('reset');
       setPhone(apiPhone);
       setTimer(60);
@@ -90,33 +90,31 @@ export default function ForgotPasswordPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-brand-50 to-slate-100 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-neutral-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-brand-600 rounded-2xl mb-4 shadow-lg">
-            <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-            </svg>
+          <div className="inline-flex items-center justify-center w-14 h-14 bg-brand-900 rounded-2xl mb-4 shadow-lg">
+            <span className="text-white font-black text-lg">BVA</span>
           </div>
-          <h1 className="text-2xl font-bold text-slate-900">Восстановление пароля</h1>
-          <p className="text-slate-500 mt-1">Меркурий Медет</p>
+          <h1 className="text-2xl font-bold text-slate-950">Восстановление пароля</h1>
+          <p className="text-slate-500 mt-1">Best Volleyball Academy</p>
         </div>
 
         {step === 'phone' && (
-          <form onSubmit={handleSendCode} className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 space-y-4">
+          <form onSubmit={handleSendCode} className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 space-y-4">
             <p className="text-sm text-slate-500">Введите номер телефона, привязанный к аккаунту. Мы отправим код в WhatsApp.</p>
             <PhoneInput label="Номер телефона" value={phone} onChange={setPhone} error={phoneError} />
             <Button type="submit" loading={loading} className="w-full" size="lg">
               Отправить код
             </Button>
             <p className="text-center text-sm text-slate-500">
-              <Link to="/login" className="text-brand-600 hover:underline">Вернуться ко входу</Link>
+              <Link to="/login" className="text-brand-700 hover:underline">Вернуться ко входу</Link>
             </p>
           </form>
         )}
 
         {step === 'reset' && (
-          <form onSubmit={handleReset} className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 space-y-4">
+          <form onSubmit={handleReset} className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 space-y-4">
             <p className="text-sm text-slate-500">
               Код отправлен на <span className="font-medium text-slate-700">{formatPhoneDisplay(phone)}</span>
             </p>
@@ -168,7 +166,7 @@ export default function ForgotPasswordPage() {
                 type="button"
                 onClick={handleResend}
                 disabled={resending}
-                className="w-full text-sm text-brand-600 hover:underline disabled:opacity-50"
+                className="w-full text-sm text-brand-700 hover:underline disabled:opacity-50"
               >
                 {resending ? 'Отправка...' : 'Отправить код повторно'}
               </button>

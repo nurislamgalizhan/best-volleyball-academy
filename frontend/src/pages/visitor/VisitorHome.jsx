@@ -116,7 +116,7 @@ export default function VisitorHome() {
           <div className="mt-5 pt-5 border-t border-brand-500">
             {isFrozen ? (
               <>
-                <p className="text-blue-200 text-xs font-medium">Абонемент заморожен</p>
+                <p className="text-slate-200 text-xs font-medium">Абонемент заморожен</p>
                 <p className="text-white font-semibold mt-0.5">
                   до {format(new Date(selectedSubscription.frozenUntil), 'd MMMM yyyy', { locale: ru })}
                 </p>
@@ -142,34 +142,6 @@ export default function VisitorHome() {
           <p className="text-brand-300 text-sm mt-4">Нет активного абонемента</p>
         )}
       </div>
-
-      {selectedSubscription && selectedTariff && (
-        <div className="bg-white rounded-2xl border border-slate-100 p-6 space-y-3">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h2 className="font-semibold text-slate-900">{selectedTariff.name}</h2>
-              <p className="text-sm text-slate-500 mt-1">Ваш текущий тариф</p>
-            </div>
-            <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700">
-              {selectedTariff.visitsAmount === null ? 'Безлимит' : `${selectedTariff.visitsAmount} посещ.`}
-            </span>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-            <div className="rounded-xl bg-slate-50 p-3">
-              <p className="text-slate-500">Секция</p>
-              <p className="font-medium text-slate-900 mt-1">{selectedSubscription.section?.name}</p>
-            </div>
-            <div className="rounded-xl bg-slate-50 p-3">
-              <p className="text-slate-500">Окно посещения</p>
-              <p className="font-medium text-slate-900 mt-1">{selectedTariff.accessLabel || 'Любое время'}</p>
-            </div>
-            <div className="rounded-xl bg-slate-50 p-3">
-              <p className="text-slate-500">Срок действия</p>
-              <p className="font-medium text-slate-900 mt-1">{selectedTariff.durationDays} дн.</p>
-            </div>
-          </div>
-        </div>
-      )}
 
       {canCheckIn && (
         <div className="bg-white rounded-2xl border border-slate-100 p-6 space-y-5">
@@ -237,10 +209,38 @@ export default function VisitorHome() {
         </div>
       )}
 
+      {selectedSubscription && selectedTariff && (
+        <div className="bg-white rounded-2xl border border-slate-100 p-6 space-y-3">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="font-semibold text-slate-900">{selectedTariff.name}</h2>
+              <p className="text-sm text-slate-500 mt-1">Ваш текущий тариф</p>
+            </div>
+            <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700">
+              {selectedTariff.visitsAmount === null ? 'Безлимит' : `${selectedTariff.visitsAmount} посещ.`}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+            <div className="rounded-xl bg-slate-50 p-3">
+              <p className="text-slate-500">Секция</p>
+              <p className="font-medium text-slate-900 mt-1">{selectedSubscription.section?.name}</p>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-3">
+              <p className="text-slate-500">Окно посещения</p>
+              <p className="font-medium text-slate-900 mt-1">{selectedTariff.accessLabel || 'Любое время'}</p>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-3">
+              <p className="text-slate-500">Срок действия</p>
+              <p className="font-medium text-slate-900 mt-1">{selectedTariff.durationDays} дн.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isFrozen && (
-        <div className="bg-blue-50 border border-blue-100 rounded-2xl p-5 text-center">
-          <p className="text-blue-800 font-medium">Абонемент заморожен</p>
-          <p className="text-blue-600 text-sm mt-1">
+        <div className="bg-slate-100 border border-slate-200 rounded-2xl p-5 text-center">
+          <p className="text-slate-800 font-medium">Абонемент заморожен</p>
+          <p className="text-slate-600 text-sm mt-1">
             Заморозка действует до {format(new Date(selectedSubscription.frozenUntil), 'd MMMM yyyy', { locale: ru })}
           </p>
         </div>
