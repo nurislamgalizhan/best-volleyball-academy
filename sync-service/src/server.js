@@ -101,8 +101,10 @@ app.get('/v1/status', async (req, res, next) => {
       `SELECT
          COUNT(*) FILTER (WHERE status IN ('PENDING', 'PROCESSING', 'FAILED'))::int AS pending,
          COUNT(*) FILTER (WHERE status = 'FAILED')::int AS failed,
-         COALESCE(EXTRACT(EPOCH FROM (NOW() - MIN(created_at)))
-           FILTER (WHERE status IN ('PENDING', 'PROCESSING', 'FAILED')), 0)::int AS lag_seconds
+         COALESCE(EXTRACT(EPOCH FROM (
+           NOW() - (MIN(created_at)
+             FILTER (WHERE status IN ('PENDING', 'PROCESSING', 'FAILED')))
+         )), 0)::int AS lag_seconds
        FROM projection_jobs`
     );
     res.json({
