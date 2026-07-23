@@ -57,13 +57,13 @@ Backend читает актуальную роль из базы на каждо
 
 ```bash
 # Запуск приватного сервиса (используется тот же корневой .env)
-docker compose -f docker-compose.sync.yml up -d --build
+docker compose -p volleyball-sync -f docker-compose.sync.yml up -d --build
 
 # Безопасный предварительный отчет, без изменения данных
-docker compose -f docker-compose.sync.yml run --rm sync node src/backfill.js
+docker compose -p volleyball-sync -f docker-compose.sync.yml run --rm sync node src/backfill.js
 
 # Идемпотентный первичный перенос
-docker compose -f docker-compose.sync.yml run --rm sync node src/backfill.js --apply
+docker compose -p volleyball-sync -f docker-compose.sync.yml run --rm sync node src/backfill.js --apply
 ```
 
 Перед `--apply` обязательны полные `pg_dump` обеих баз. Сначала разверните additive-миграции с `VOLLEYBALL_SYNC_ENABLED=false`, выполните dry-run и перенос, затем включите BVA и только после проверки Mercury.
