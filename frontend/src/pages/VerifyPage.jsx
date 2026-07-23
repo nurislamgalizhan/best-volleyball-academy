@@ -5,6 +5,7 @@ import api from '../api/axios.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import Button from '../components/ui/Button.jsx';
 import { formatPhoneDisplay } from '../utils/phone.js';
+import { isStaffRole } from '../utils/roles.js';
 
 const PENDING_VERIFICATION_PHONE_KEY = 'pendingVerificationPhone';
 const PENDING_VERIFICATION_COOLDOWN_KEY = 'pendingVerificationCooldownUntil';
@@ -84,7 +85,7 @@ export default function VerifyPage() {
       sessionStorage.removeItem(PENDING_VERIFICATION_COOLDOWN_KEY);
       login(data.token, data.user);
       toast.success('Аккаунт подтвержден!');
-      navigate(data.user.role === 'ADMIN' ? '/admin' : '/visitor');
+      navigate(isStaffRole(data.user.role) ? '/admin' : '/visitor');
     } catch (err) {
       toast.error(err.response?.data?.message || 'Неверный код');
     } finally {

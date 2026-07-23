@@ -7,6 +7,7 @@ import Button from '../components/ui/Button.jsx';
 import Input from '../components/ui/Input.jsx';
 import PhoneInput from '../components/ui/PhoneInput.jsx';
 import { isCompletePhone, toApiPhone } from '../utils/phone.js';
+import { isStaffRole } from '../utils/roles.js';
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -37,7 +38,7 @@ export default function LoginPage() {
 
   const validate = () => {
     const nextErrors = {};
-    if (!isCompletePhone(form.phone)) nextErrors.phone = 'Введите номер в формате +7 775 232 22 94';
+    if (!isCompletePhone(form.phone)) nextErrors.phone = 'Введите номер в формате +7 XXX XXX XX XX';
     if (!form.password) nextErrors.password = 'Введите пароль';
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
@@ -76,7 +77,7 @@ export default function LoginPage() {
 
       login(data.token, data.user);
       toast.success(`Добро пожаловать, ${data.user.firstName}!`);
-      navigate(data.user.role === 'ADMIN' ? '/admin' : '/visitor');
+      navigate(isStaffRole(data.user.role) ? '/admin' : '/visitor');
     } catch (err) {
       attemptsRef.current += 1;
       toast.error(err.response?.data?.message || 'Неверный номер телефона или пароль');

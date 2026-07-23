@@ -15,13 +15,15 @@ import VisitsAdminPage from './pages/admin/VisitsAdminPage.jsx';
 import AccountingPage from './pages/admin/AccountingPage.jsx';
 import TariffsAdminPage from './pages/admin/TariffsAdminPage.jsx';
 import AdminHistoryPage from './pages/admin/AdminHistoryPage.jsx';
+import AdminsPage from './pages/admin/AdminsPage.jsx';
 
 import VisitorLayout from './pages/visitor/VisitorLayout.jsx';
 import VisitorHome from './pages/visitor/VisitorHome.jsx';
 import VisitorTariffsPage from './pages/visitor/VisitorTariffsPage.jsx';
 import VisitorHistoryPage from './pages/visitor/VisitorHistoryPage.jsx';
+import { isStaffRole } from './utils/roles.js';
 
-function RequireAuth({ children, role }) {
+function RequireAuth({ children, role, roles }) {
   const { user, loading } = useAuth();
   if (loading) {
     return (
@@ -32,6 +34,7 @@ function RequireAuth({ children, role }) {
   }
   if (!user) return <Navigate to="/login" replace />;
   if (role && user.role !== role) return <Navigate to="/" replace />;
+  if (roles && !roles.includes(user.role)) return <Navigate to="/" replace />;
   return children;
 }
 
@@ -39,7 +42,7 @@ function RootRedirect() {
   const { user, loading } = useAuth();
   if (loading) return null;
   if (!user) return <Navigate to="/login" replace />;
-  if (user.role === 'ADMIN') return <Navigate to="/admin" replace />;
+  if (isStaffRole(user.role)) return <Navigate to="/admin" replace />;
   return <Navigate to="/visitor" replace />;
 }
 
@@ -56,7 +59,7 @@ export default function App() {
       <Route
         path="/admin"
         element={
-          <RequireAuth role="ADMIN">
+          <RequireAuth roles={['SUPER_ADMIN', 'ADMIN']}>
             <AdminLayout />
           </RequireAuth>
         }
@@ -65,8 +68,9 @@ export default function App() {
         <Route path="users" element={<UsersPage />} />
         <Route path="users/:id" element={<UserDetailPage />} />
         <Route path="visits" element={<VisitsAdminPage />} />
-        <Route path="accounting" element={<AccountingPage />} />
-        <Route path="history" element={<AdminHistoryPage />} />
+        <Route path="accounting" element={<RequireAuth role="SUPER_ADMIN"><AccountingPage /></RequireAuth>} />
+        <Route path="history" element={<RequireAuth role="SUPER_ADMIN"><AdminHistoryPage /></RequireAuth>} />
+        <Route path="admins" element={<RequireAuth role="SUPER_ADMIN"><AdminsPage /></RequireAuth>} />
         <Route path="tariffs" element={<TariffsAdminPage />} />
       </Route>
 

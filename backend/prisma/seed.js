@@ -25,13 +25,22 @@ async function main() {
     process.exit(1);
   }
 
-  const passwordHash = await bcrypt.hash(password, 12);
-
-  const admin = await prisma.user.upsert({
-    where:  { phone },
-    update: { passwordHash, role: 'ADMIN', isVerified: true },
-    create: { firstName, lastName, phone, passwordHash, role: 'ADMIN', isVerified: true },
-  });
+  const existingAdmin = await prisma.user.findUnique({ where: { phone } });
+  const admin = existingAdmin
+    ? await prisma.user.update({
+        where: { phone },
+        data: { isVerified: true, isActive: true },
+      })
+    : await prisma.user.create({
+        data: {
+          firstName,
+          lastName,
+          phone,
+          passwordHash: await bcrypt.hash(password, 12),
+          role: 'SUPER_ADMIN',
+          isVerified: true,
+        },
+      });
 
   console.log('✅ Admin:', admin.phone);
 

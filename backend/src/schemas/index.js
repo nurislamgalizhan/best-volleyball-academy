@@ -139,7 +139,13 @@ export const createUserSchema = z.object({
   lastName: nameSchema,
   phone: phoneSchema,
   password: z.string().min(6).max(200),
-  role: z.enum(['ADMIN', 'VISITOR']).optional(),
+});
+
+export const createAdminSchema = z.object({
+  firstName: nameSchema,
+  lastName: nameSchema,
+  phone: phoneSchema,
+  password: z.string().min(8).max(200),
 });
 
 export const adminCheckInSchema = z.object({

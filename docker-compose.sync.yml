@@ -1,0 +1,63 @@
+name: volleyball-sync
+
+services:
+  sync-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${SYNC_DB_USER:-volleyball_sync}
+      POSTGRES_PASSWORD: ${SYNC_DB_PASSWORD:?SYNC_DB_PASSWORD is required}
+      POSTGRES_DB: ${SYNC_DB_NAME:-volleyball_sync}
+    volumes:
+      - sync_pgdata:/var/lib/postgresql/data
+      - ./sync-service/sql/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SYNC_DB_USER:-volleyball_sync} -d ${SYNC_DB_NAME:-volleyball_sync}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - sync_private
+
+  sync:
+    build:
+      context: ./sync-service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      PORT: 4100
+      DATABASE_URL: postgresql://${SYNC_DB_USER:-volleyball_sync}:${SYNC_DB_PASSWORD}@sync-db:5432/${SYNC_DB_NAME:-volleyball_sync}
+      MERCURY_DATABASE_URL: ${SYNC_MERCURY_DATABASE_URL:?SYNC_MERCURY_DATABASE_URL is required}
+      BVA_DATABASE_URL: ${SYNC_BVA_DATABASE_URL:?SYNC_BVA_DATABASE_URL is required}
+      SYNC_HMAC_SECRET: ${SYNC_HMAC_SECRET:?SYNC_HMAC_SECRET is required}
+      MERCURY_SECTION_NAME: ${MERCURY_SYNC_SECTION_NAME:-Волейбол}
+      BVA_SECTION_NAME: ${BVA_SYNC_SECTION_NAME:-Волейбол (Коперника 130)}
+    depends_on:
+      sync-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4100/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      sync_private:
+      mercury:
+        aliases:
+          - volleyball-sync
+      bva:
+        aliases:
+          - volleyball-sync
+
+volumes:
+  sync_pgdata:
+
+networks:
+  sync_private:
+    internal: true
+  mercury:
+    external: true
+    name: mercury-medet-app_default
+  bva:
+    external: true
+    name: best-volleyball-academy_default

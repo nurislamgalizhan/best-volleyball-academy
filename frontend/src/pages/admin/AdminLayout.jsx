@@ -1,15 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '../../api/axios.js';
 import { useAuth } from '../../context/AuthContext.jsx';
+import { isSuperAdminRole } from '../../utils/roles.js';
 
 const navItems = [
   { to: '/admin', label: 'Главная', end: true, icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
   { to: '/admin/users', label: 'Клиенты', icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z' },
   { to: '/admin/visits', label: 'Посещения', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2m-6 0a2 2 0 002 2h2a2 2 0 002-2m-6 0a2 2 0 012-2h2a2 2 0 012 2m-3 8l2 2 4-4' },
-  { to: '/admin/accounting', label: 'Бухгалтерия', icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
-  { to: '/admin/history', label: 'История изменений', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
+  { to: '/admin/accounting', label: 'Бухгалтерия', superOnly: true, icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
+  { to: '/admin/history', label: 'История изменений', superOnly: true, icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
+  { to: '/admin/admins', label: 'Администраторы', superOnly: true, icon: 'M12 11c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm-7 9a7 7 0 0114 0H5zm13-8h4m-2-2v4' },
   { to: '/admin/tariffs', label: 'Тарифы', icon: 'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z' },
 ];
 
@@ -20,6 +22,26 @@ export default function AdminLayout() {
   const [pwModal, setPwModal] = useState(false);
   const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [pwLoading, setPwLoading] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(null);
+  const visibleNavItems = navItems.filter((item) => !item.superOnly || isSuperAdminRole(user?.role));
+
+  useEffect(() => {
+    let active = true;
+    const loadStatus = async () => {
+      try {
+        const { data } = await api.get('/sync/status');
+        if (active) setSyncStatus(data);
+      } catch {
+        if (active) setSyncStatus({ status: 'unavailable' });
+      }
+    };
+    loadStatus();
+    const timer = setInterval(loadStatus, 60_000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, []);
 
   const handleLogout = () => {
     logout();
@@ -70,13 +92,15 @@ export default function AdminLayout() {
             </div>
             <div>
               <p className="font-semibold text-sm">Best Volleyball Academy</p>
-              <p className="text-xs text-slate-400">Администратор</p>
+              <p className="text-xs text-slate-400">
+                {isSuperAdminRole(user?.role) ? 'Главный администратор' : 'Администратор'}
+              </p>
             </div>
           </div>
         </div>
 
         <nav className="flex-1 p-4 space-y-1">
-          {navItems.map(({ to, label, end, icon }) => (
+          {visibleNavItems.map(({ to, label, end, icon }) => (
             <NavLink
               key={to}
               to={to}
@@ -97,6 +121,16 @@ export default function AdminLayout() {
         </nav>
 
         <div className="p-4 border-t border-slate-700">
+          {syncStatus && syncStatus.status !== 'disabled' && (
+            <div className="px-3 pb-3 flex items-center gap-2 text-xs text-slate-400">
+              <span className={`w-2 h-2 rounded-full ${
+                syncStatus.status === 'ok' ? 'bg-emerald-400' : 'bg-amber-400'
+              }`} />
+              {syncStatus.status === 'ok'
+                ? 'Синхронизация работает'
+                : 'Синхронизация задержана'}
+            </div>
+          )}
           <div className="flex items-center gap-3 px-3 py-2 mb-2">
             <div className="w-8 h-8 bg-slate-700 rounded-full flex items-center justify-center text-sm font-medium flex-shrink-0">
               {user?.firstName?.[0]}

@@ -40,7 +40,7 @@ export default function RegisterPage() {
     else if (!NAME_REGEX.test(form.lastName)) nextErrors.lastName = 'Только буквы, пробел и дефис';
     else if (form.lastName.length > 200) nextErrors.lastName = 'Максимум 200 символов';
 
-    if (!isCompletePhone(form.phone)) nextErrors.phone = 'Введите номер в формате +7 775 232 22 94';
+    if (!isCompletePhone(form.phone)) nextErrors.phone = 'Введите номер в формате +7 XXX XXX XX XX';
     if (form.password.length < 6) nextErrors.password = 'Минимум 6 символов';
     else if (form.password.length > 200) nextErrors.password = 'Максимум 200 символов';
     if (form.password !== form.confirm) nextErrors.confirm = 'Пароли не совпадают';

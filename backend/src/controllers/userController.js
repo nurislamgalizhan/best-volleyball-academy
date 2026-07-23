@@ -3,10 +3,21 @@ import { prisma } from '../db.js';
 import { usersQuerySchema, adjustUserSchema, createUserSchema, logsQuerySchema, freezeSchema, cancelSubscriptionSchema, activateSubscriptionSchema } from '../schemas/index.js';
 import { createAdminAction } from '../utils/adminActions.js';
 import { clearExpiredVisits, clearExpiredVisitsForUsers } from '../utils/subscription.js';
+import { isStaffRole } from '../utils/roles.js';
+import { commandSharedSubscription, createIdempotencyKey } from '../services/syncClient.js';
+import { applySharedSubscriptionState } from '../services/sharedOperations.js';
 
 function userPublic(user) {
   const { passwordHash, verificationCode, verificationCodeExpires, ...rest } = user;
   return rest;
+}
+
+function subscriptionPublic(subscription) {
+  return {
+    ...subscription,
+    isShared: Boolean(subscription.syncId),
+    sourceSite: subscription.originSite,
+  };
 }
 
 async function getSubscriptionForAction(userId, userSubscriptionId) {
@@ -46,15 +57,20 @@ export async function getUsers(req, res, next) {
       isActive: true,
       role: 'VISITOR',
       ...(sectionId && {
-        subscriptions: {
-          some: { sectionId, status: 'ACTIVE' },
-        },
+        OR: [
+          { sectionMemberships: { some: { sectionId } } },
+          { subscriptions: { some: { sectionId, status: 'ACTIVE' } } },
+        ],
       }),
       ...(search && {
-        OR: [
-          { firstName: { contains: search, mode: 'insensitive' } },
-          { lastName: { contains: search, mode: 'insensitive' } },
-          { phone: { contains: search, mode: 'insensitive' } },
+        AND: [
+          {
+            OR: [
+              { firstName: { contains: search, mode: 'insensitive' } },
+              { lastName: { contains: search, mode: 'insensitive' } },
+              { phone: { contains: search, mode: 'insensitive' } },
+            ],
+          },
         ],
       }),
     };
@@ -89,7 +105,13 @@ export async function getUsers(req, res, next) {
       prisma.user.count({ where }),
     ]);
 
-    res.json({ data: users, meta: { total, page, limit, pages: Math.ceil(total / limit) } });
+    res.json({
+      data: users.map((user) => ({
+        ...user,
+        subscriptions: user.subscriptions.map(subscriptionPublic),
+      })),
+      meta: { total, page, limit, pages: Math.ceil(total / limit) },
+    });
   } catch (err) {
     next(err);
   }
@@ -138,10 +160,20 @@ export async function getUserById(req, res, next) {
 
     user = await clearExpiredVisits(prisma, user);
 
-    const activeSubscriptions = user.subscriptions.filter((subscription) => subscription.status === 'ACTIVE');
+    const subscriptions = user.subscriptions.map(subscriptionPublic);
+    const activeSubscriptions = subscriptions.filter((subscription) => subscription.status === 'ACTIVE');
     const isUnlimitedSubscription = activeSubscriptions.some((subscription) => subscription.tariff?.visitsAmount === null);
 
-    res.json({ ...userPublic(user), activeSubscriptions, isUnlimitedSubscription: !!isUnlimitedSubscription });
+    res.json({
+      ...userPublic(user),
+      subscriptions,
+      visitLogs: user.visitLogs.map((visit) => ({
+        ...visit,
+        isShared: Boolean(visit.syncId),
+      })),
+      activeSubscriptions,
+      isUnlimitedSubscription: !!isUnlimitedSubscription,
+    });
   } catch (err) {
     next(err);
   }
@@ -149,7 +181,7 @@ export async function getUserById(req, res, next) {
 
 export async function createUser(req, res, next) {
   try {
-    const { firstName, lastName, phone, password, role } = createUserSchema.parse(req.body);
+    const { firstName, lastName, phone, password } = createUserSchema.parse(req.body);
 
     const existing = await prisma.user.findUnique({ where: { phone } });
     if (existing) {
@@ -159,7 +191,7 @@ export async function createUser(req, res, next) {
     const passwordHash = await bcrypt.hash(password, 12);
     const user = await prisma.$transaction(async (tx) => {
       const createdUser = await tx.user.create({
-        data: { firstName, lastName, phone, passwordHash, role: role || 'VISITOR', isVerified: true },
+        data: { firstName, lastName, phone, passwordHash, role: 'VISITOR', isVerified: true },
       });
 
       await createAdminAction(tx, {
@@ -170,7 +202,7 @@ export async function createUser(req, res, next) {
           firstName: createdUser.firstName,
           lastName: createdUser.lastName,
           phone: createdUser.phone,
-          role: createdUser.role,
+          role: 'VISITOR',
         },
       });
 
@@ -214,15 +246,26 @@ export async function adjustUser(req, res, next) {
       }
     }
 
+    const sharedState = subscription.syncId
+      ? await commandSharedSubscription(subscription.syncId, {
+          type: 'ADJUST',
+          visitsBalance: data.visitsBalance,
+          actorLabel: `BVA администратор #${req.userId}`,
+          idempotencyKey: createIdempotencyKey(`adjust:${subscription.syncId}`),
+        })
+      : null;
+
     const updated = await prisma.$transaction(async (tx) => {
-      const nextSubscription = await tx.userSubscription.update({
-        where: { id: subscription.id },
-        data: {
-          ...(data.visitsBalance !== undefined && { visitsBalance: data.visitsBalance }),
-          ...(data.visitsBalance === 0 && { status: 'EXPIRED', frozenUntil: null }),
-        },
-        include: { section: true, tariff: true },
-      });
+      const nextSubscription = sharedState
+        ? await applySharedSubscriptionState(tx, subscription, sharedState)
+        : await tx.userSubscription.update({
+            where: { id: subscription.id },
+            data: {
+              ...(data.visitsBalance !== undefined && { visitsBalance: data.visitsBalance }),
+              ...(data.visitsBalance === 0 && { status: 'EXPIRED', frozenUntil: null }),
+            },
+            include: { section: true, tariff: true },
+          });
 
       if (data.visitsBalance === 0) {
         await tx.user.update({
@@ -256,7 +299,7 @@ export async function deactivateUser(req, res, next) {
     const id = parseInt(req.params.id, 10);
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
-    if (user.role === 'ADMIN') return res.status(403).json({ message: 'Нельзя деактивировать администратора' });
+    if (isStaffRole(user.role)) return res.status(403).json({ message: 'Нельзя деактивировать администратора' });
 
     await prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id }, data: { isActive: false } });
@@ -300,12 +343,22 @@ export async function cancelSubscription(req, res, next) {
       return res.status(400).json({ message: 'Можно деактивировать только активный абонемент' });
     }
 
+    const sharedState = subscription.syncId
+      ? await commandSharedSubscription(subscription.syncId, {
+          type: 'CANCEL',
+          actorLabel: `BVA администратор #${req.userId}`,
+          idempotencyKey: createIdempotencyKey(`cancel:${subscription.syncId}`),
+        })
+      : null;
+
     const updated = await prisma.$transaction(async (tx) => {
-      const nextSubscription = await tx.userSubscription.update({
-        where: { id: subscription.id },
-        data: { status: 'CANCELLED', visitsBalance: 0, frozenUntil: null },
-        include: { section: true, tariff: true },
-      });
+      const nextSubscription = sharedState
+        ? await applySharedSubscriptionState(tx, subscription, sharedState)
+        : await tx.userSubscription.update({
+            where: { id: subscription.id },
+            data: { status: 'CANCELLED', visitsBalance: 0, frozenUntil: null },
+            include: { section: true, tariff: true },
+          });
 
       const otherActiveCount = await tx.userSubscription.count({
         where: {
@@ -400,16 +453,27 @@ export async function activateSubscription(req, res, next) {
       }
     }
 
-    const updated = await prisma.$transaction(async (tx) => {
-      const nextSubscription = await tx.userSubscription.update({
-        where: { id: subscription.id },
-        data: {
-          status: 'ACTIVE',
+    const sharedState = subscription.syncId
+      ? await commandSharedSubscription(subscription.syncId, {
+          type: 'ACTIVATE',
           visitsBalance: nextVisitsBalance,
-          frozenUntil: null,
-        },
-        include: { section: true, tariff: true },
-      });
+          actorLabel: `BVA администратор #${req.userId}`,
+          idempotencyKey: createIdempotencyKey(`activate:${subscription.syncId}`),
+        })
+      : null;
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const nextSubscription = sharedState
+        ? await applySharedSubscriptionState(tx, subscription, sharedState)
+        : await tx.userSubscription.update({
+            where: { id: subscription.id },
+            data: {
+              status: 'ACTIVE',
+              visitsBalance: nextVisitsBalance,
+              frozenUntil: null,
+            },
+            include: { section: true, tariff: true },
+          });
 
       await tx.user.update({
         where: { id },
@@ -447,7 +511,7 @@ export async function activateSubscription(req, res, next) {
 export async function freezeSubscription(req, res, next) {
   try {
     const id = parseInt(req.params.id, 10);
-    const isAdmin = req.userRole === 'ADMIN';
+    const isAdmin = isStaffRole(req.userRole);
     const { userSubscriptionId, freezeFrom, freezeTo } = freezeSchema.parse(req.body);
 
     const user = await prisma.user.findUnique({ where: { id } });
@@ -485,12 +549,30 @@ export async function freezeSubscription(req, res, next) {
 
     const newSubscriptionEnd = new Date(subscription.subscriptionEnd.getTime() + freezeDays * 24 * 60 * 60 * 1000);
 
+    const sharedState = subscription.syncId
+      ? await commandSharedSubscription(subscription.syncId, {
+          type: 'FREEZE',
+          frozenUntil: freezeToDate.toISOString(),
+          subscriptionEnd: newSubscriptionEnd.toISOString(),
+          details: {
+            sectionName: subscription.section.name,
+            freezeFrom: freezeFromDate.toISOString(),
+            frozenUntil: freezeToDate.toISOString(),
+            daysAdded: freezeDays,
+          },
+          actorLabel: isAdmin ? `BVA администратор #${req.userId}` : `BVA клиент #${req.userId}`,
+          idempotencyKey: createIdempotencyKey(`freeze:${subscription.syncId}`),
+        })
+      : null;
+
     const updated = await prisma.$transaction(async (tx) => {
-      const s = await tx.userSubscription.update({
-        where: { id: subscription.id },
-        data: { frozenUntil: freezeToDate, subscriptionEnd: newSubscriptionEnd },
-        include: { section: true, tariff: true },
-      });
+      const s = sharedState
+        ? await applySharedSubscriptionState(tx, subscription, sharedState)
+        : await tx.userSubscription.update({
+            where: { id: subscription.id },
+            data: { frozenUntil: freezeToDate, subscriptionEnd: newSubscriptionEnd },
+            include: { section: true, tariff: true },
+          });
 
       await createAdminAction(tx, {
         adminId: req.userId,
@@ -516,7 +598,7 @@ export async function freezeSubscription(req, res, next) {
 export async function unfreezeSubscription(req, res, next) {
   try {
     const id = parseInt(req.params.id, 10);
-    const isAdmin = req.userRole === 'ADMIN';
+    const isAdmin = isStaffRole(req.userRole);
     const userSubscriptionId = req.body?.userSubscriptionId ? parseInt(req.body.userSubscriptionId, 10) : undefined;
 
     const user = await prisma.user.findUnique({ where: { id } });
@@ -542,10 +624,37 @@ export async function unfreezeSubscription(req, res, next) {
     const remainingFreezeDays = Math.ceil((subscription.frozenUntil.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
     const newSubscriptionEnd = new Date(subscription.subscriptionEnd.getTime() - remainingFreezeDays * 24 * 60 * 60 * 1000);
 
-    const updated = await prisma.userSubscription.update({
-      where: { id: subscription.id },
-      data: { frozenUntil: null, subscriptionEnd: newSubscriptionEnd },
-      include: { section: true, tariff: true },
+    const sharedState = subscription.syncId
+      ? await commandSharedSubscription(subscription.syncId, {
+          type: 'UNFREEZE',
+          subscriptionEnd: newSubscriptionEnd.toISOString(),
+          details: {
+            sectionName: subscription.section.name,
+            daysRemoved: remainingFreezeDays,
+          },
+          actorLabel: isAdmin ? `BVA администратор #${req.userId}` : `BVA клиент #${req.userId}`,
+          idempotencyKey: createIdempotencyKey(`unfreeze:${subscription.syncId}`),
+        })
+      : null;
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const nextSubscription = sharedState
+        ? await applySharedSubscriptionState(tx, subscription, sharedState)
+        : await tx.userSubscription.update({
+            where: { id: subscription.id },
+            data: { frozenUntil: null, subscriptionEnd: newSubscriptionEnd },
+            include: { section: true, tariff: true },
+          });
+      await createAdminAction(tx, {
+        adminId: isAdmin ? req.userId : null,
+        targetUserId: id,
+        action: 'SUBSCRIPTION_UNFROZEN',
+        details: {
+          sectionName: subscription.section.name,
+          daysRemoved: remainingFreezeDays,
+        },
+      });
+      return nextSubscription;
     });
 
     res.json({ message: 'Абонемент разморожен', subscriptionEnd: updated.subscriptionEnd });

@@ -17,6 +17,7 @@ import {
   registerFailedAttempt,
 } from '../utils/authRateLimit.js';
 import { buildUserProfile } from '../utils/userProfile.js';
+import { isStaffRole } from '../utils/roles.js';
 
 const CODE_TTL_MS = 10 * 60 * 1000;
 const RESEND_COOLDOWN_SECONDS = 60;
@@ -234,7 +235,7 @@ export async function login(req, res, next) {
 
     clearFailedAttempts(req.ip, phone);
 
-    if (user.role === 'ADMIN') {
+    if (isStaffRole(user.role)) {
       return res.json(await buildAdminMfaResponse(user, 'AdminLogin'));
     }
 
@@ -251,7 +252,7 @@ export async function adminMfaVerify(req, res, next) {
     const { phone, code } = verifyCodeSchema.parse(req.body);
 
     const user = await prisma.user.findUnique({ where: { phone } });
-    if (!user || !user.isActive || user.role !== 'ADMIN') {
+    if (!user || !user.isActive || !isStaffRole(user.role)) {
       return res.status(404).json({ message: 'Администратор не найден' });
     }
 
@@ -280,7 +281,7 @@ export async function adminMfaResend(req, res, next) {
     const { phone } = resendCodeSchema.parse(req.body);
 
     const user = await prisma.user.findUnique({ where: { phone } });
-    if (!user || !user.isActive || user.role !== 'ADMIN') {
+    if (!user || !user.isActive || !isStaffRole(user.role)) {
       return res.status(404).json({ message: 'Администратор не найден' });
     }
 

@@ -13,6 +13,15 @@ import {
   getMillisecondsUntilNextDailyCleanup,
   hasExpiredSubscription,
 } from '../src/utils/subscription.js';
+import { isStaffRole, isSuperAdminRole } from '../src/utils/roles.js';
+
+test('BVA staff roles keep super-admin-only permissions separate', () => {
+  assert.equal(isStaffRole('SUPER_ADMIN'), true);
+  assert.equal(isStaffRole('ADMIN'), true);
+  assert.equal(isStaffRole('VISITOR'), false);
+  assert.equal(isSuperAdminRole('SUPER_ADMIN'), true);
+  assert.equal(isSuperAdminRole('ADMIN'), false);
+});
 
 test('normalizePhone normalizes local and international formats', () => {
   assert.equal(normalizePhone('7771234567'), '77771234567');
@@ -124,6 +133,7 @@ test('expired visits cleanup updates database rows due at the current time', asy
     where: {
       status: 'ACTIVE',
       subscriptionEnd: { lte: now },
+      syncId: null,
     },
     data: { status: 'EXPIRED', visitsBalance: 0, frozenUntil: null },
   });
@@ -132,6 +142,7 @@ test('expired visits cleanup updates database rows due at the current time', asy
       status: 'ACTIVE',
       tariffId: { in: [10, 11] },
       visitsBalance: { lte: 0 },
+      syncId: null,
     },
     data: { status: 'EXPIRED', visitsBalance: 0, frozenUntil: null },
   });

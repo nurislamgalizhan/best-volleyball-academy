@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticate, requireVerified, requireAdmin } from '../middleware/auth.js';
+import { authenticate, requireVerified, requireStaff, requireSuperAdmin } from '../middleware/auth.js';
 import {
   getUsers,
   getUserById,
@@ -19,10 +19,10 @@ const router = Router();
 router.post('/:id/freeze', authenticate, requireVerified, freezeSubscription);
 router.post('/:id/unfreeze', authenticate, requireVerified, unfreezeSubscription);
 
-router.use(authenticate, requireVerified, requireAdmin);
+router.use(authenticate, requireVerified, requireStaff);
 
 router.get('/', getUsers);
-router.get('/admin-history', getAdminActionLogs);
+router.get('/admin-history', requireSuperAdmin, getAdminActionLogs);
 router.post('/', createUser);
 router.get('/:id', getUserById);
 router.patch('/:id/adjust', adjustUser);

@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../api/axios.js';
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
+import { useAuth } from '../../context/AuthContext.jsx';
+import { isSuperAdminRole } from '../../utils/roles.js';
 
 const CARD_STYLES = {
   brand: {
@@ -76,25 +78,31 @@ function SkeletonCard() {
 
 export default function AdminDashboard() {
   const [stats, setStats] = useState(null);
+  const { user } = useAuth();
+  const isSuperAdmin = isSuperAdminRole(user?.role);
 
   useEffect(() => {
     const now = new Date();
     const from = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).toISOString();
     const to = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999).toISOString();
 
-    Promise.all([
+    const requests = [
       api.get('/users', { params: { limit: 1 } }),
       api.get('/visits', { params: { limit: 1, from, to } }),
-      api.get('/sales', { params: { limit: 1, from, to } }),
-    ]).then(([users, visits, sales]) => {
+    ];
+    if (isSuperAdmin) {
+      requests.push(api.get('/sales', { params: { limit: 1, from, to } }));
+    }
+
+    Promise.all(requests).then(([users, visits, sales]) => {
       setStats({
         totalUsers: users.data.meta.total,
         todayVisits: visits.data.meta.totalVisitsDeducted ?? 0,
-        todaySales: sales.data.meta.total,
-        todayRevenue: sales.data.meta.totalRevenue ?? 0,
+        todaySales: sales?.data.meta.total ?? 0,
+        todayRevenue: sales?.data.meta.totalRevenue ?? 0,
       });
     }).catch(() => {});
-  }, []);
+  }, [isSuperAdmin]);
 
   return (
     <div className="p-4 sm:p-8">
@@ -105,7 +113,7 @@ export default function AdminDashboard() {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+      <div className={`grid grid-cols-1 sm:grid-cols-2 ${isSuperAdmin ? 'lg:grid-cols-4' : ''} gap-3 sm:gap-4`}>
         {stats ? (
           <>
             <StatCard
@@ -119,20 +127,24 @@ export default function AdminDashboard() {
               value={stats.todayVisits}
               sub="включая гостей"
               color="emerald"
-              to="/admin/accounting"
+              to={isSuperAdmin ? '/admin/accounting' : '/admin/visits'}
             />
-            <StatCard
-              label="Продаж сегодня"
-              value={stats.todaySales}
-              color="amber"
-              to="/admin/accounting"
-            />
-            <StatCard
-              label="Выручка сегодня"
-              value={`${stats.todayRevenue.toLocaleString()} ₸`}
-              color="rose"
-              to="/admin/accounting"
-            />
+            {isSuperAdmin && (
+              <>
+                <StatCard
+                  label="Продаж сегодня"
+                  value={stats.todaySales}
+                  color="amber"
+                  to="/admin/accounting"
+                />
+                <StatCard
+                  label="Выручка сегодня"
+                  value={`${stats.todayRevenue.toLocaleString()} ₸`}
+                  color="rose"
+                  to="/admin/accounting"
+                />
+              </>
+            )}
           </>
         ) : (
           [...Array(4)].map((_, i) => <SkeletonCard key={i} />)
@@ -143,7 +155,9 @@ export default function AdminDashboard() {
         {[
           { label: 'Клиенты', desc: 'Список клиентов, профили', to: '/admin/users', icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z' },
           { label: 'Тарифы', desc: 'Управление тарифами', to: '/admin/tariffs', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2' },
-          { label: 'Бухгалтерия', desc: 'Продажи, посещения, экспорт', to: '/admin/accounting', icon: 'M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
+          ...(isSuperAdmin
+            ? [{ label: 'Бухгалтерия', desc: 'Продажи, посещения, экспорт', to: '/admin/accounting', icon: 'M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' }]
+            : [{ label: 'Посещения', desc: 'Журнал посещений', to: '/admin/visits', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2m-6 0h6' }]),
         ].map((link) => (
           <a
             key={link.to}
