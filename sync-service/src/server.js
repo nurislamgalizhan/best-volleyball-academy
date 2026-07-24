@@ -1,8 +1,12 @@
 import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { config, assertSite } from './config.js';
-import { centralPool, closePools, withTransaction } from './db.js';
+import { centralPool, closePools, ensureCentralSchema, withTransaction } from './db.js';
 import { verifyHmac } from './security.js';
+import {
+  completeFreezePlan,
+  createFreezePlan,
+} from './freeze.js';
 import {
   processProjectionJobs,
   queueBothSites,
@@ -30,6 +34,10 @@ function serializeSubscription(row) {
     visitsBalance: row.visits_balance,
     subscriptionEnd: row.subscription_end,
     frozenUntil: row.frozen_until,
+    freezeStartedAt: row.freeze_started_at,
+    freezeDaysUsed: row.freeze_days_used,
+    freezeDaysReserved: row.freeze_days_reserved,
+    freezeUntilManual: row.freeze_until_manual,
     version: row.version,
     plan: row.plan,
     originSite: row.origin_site,
@@ -212,9 +220,16 @@ app.post('/v1/subscriptions/:syncId/command', async (req, res, next) => {
         visitsBalance: current.visits_balance,
         subscriptionEnd: current.subscription_end,
         frozenUntil: current.frozen_until,
+        freezeStartedAt: current.freeze_started_at,
+        freezeDaysUsed: current.freeze_days_used,
+        freezeDaysReserved: current.freeze_days_reserved,
+        freezeUntilManual: current.freeze_until_manual,
         status: current.status,
         plan: current.plan,
       };
+      if (nextState.frozenUntil && new Date(nextState.frozenUntil) <= new Date()) {
+        nextState = completeFreezePlan(nextState, new Date(nextState.frozenUntil));
+      }
       let actionType = null;
       let details = {};
 
@@ -227,12 +242,23 @@ app.post('/v1/subscriptions/:syncId/command', async (req, res, next) => {
         if (balance === 0 && planLimit !== null) {
           nextState.status = 'EXPIRED';
           nextState.frozenUntil = null;
+          nextState.freezeStartedAt = null;
+          nextState.freezeDaysReserved = 0;
+          nextState.freezeUntilManual = false;
         }
         actionType = 'VISITS_BALANCE_UPDATED';
         details = { previousVisitsBalance: current.visits_balance, nextVisitsBalance: balance };
       } else if (type === 'CANCEL') {
         if (current.status !== 'ACTIVE') throw httpError(400, 'Можно деактивировать только активный абонемент');
-        nextState = { ...nextState, status: 'CANCELLED', visitsBalance: 0, frozenUntil: null };
+        nextState = {
+          ...nextState,
+          status: 'CANCELLED',
+          visitsBalance: 0,
+          frozenUntil: null,
+          freezeStartedAt: null,
+          freezeDaysReserved: 0,
+          freezeUntilManual: false,
+        };
         actionType = 'SUBSCRIPTION_CANCELLED';
         details = { previousVisitsBalance: current.visits_balance };
       } else if (type === 'ACTIVATE') {
@@ -242,37 +268,55 @@ app.post('/v1/subscriptions/:syncId/command', async (req, res, next) => {
         if (planLimit !== null && (!Number.isInteger(balance) || balance < 1 || balance > planLimit)) {
           throw httpError(400, 'Некорректный баланс для активации');
         }
-        nextState = { ...nextState, status: 'ACTIVE', visitsBalance: balance, frozenUntil: null };
+        nextState = {
+          ...nextState,
+          status: 'ACTIVE',
+          visitsBalance: balance,
+          frozenUntil: null,
+          freezeStartedAt: null,
+          freezeDaysReserved: 0,
+          freezeUntilManual: false,
+        };
         actionType = 'VISITS_BALANCE_UPDATED';
         details = { activatedSubscription: true, previousVisitsBalance: current.visits_balance, nextVisitsBalance: balance };
       } else if (type === 'FREEZE') {
-        if (current.status !== 'ACTIVE') throw httpError(400, 'Нет активного абонемента для заморозки');
-        const frozenUntil = new Date(payload.frozenUntil);
-        const subscriptionEnd = new Date(payload.subscriptionEnd);
-        if (
-          Number.isNaN(frozenUntil.getTime()) ||
-          Number.isNaN(subscriptionEnd.getTime()) ||
-          frozenUntil <= new Date() ||
-          subscriptionEnd <= frozenUntil
-        ) {
-          throw httpError(400, 'Некорректный период заморозки');
+        if (nextState.status !== 'ACTIVE') throw httpError(400, 'Нет активного абонемента для заморозки');
+        if (nextState.frozenUntil && new Date(nextState.frozenUntil) > new Date()) {
+          throw httpError(400, 'Абонемент уже заморожен');
         }
-        nextState.frozenUntil = frozenUntil;
-        nextState.subscriptionEnd = subscriptionEnd;
+        try {
+          const legacyDays = payload.details?.daysAdded
+            || (
+              payload.frozenUntil && payload.details?.freezeFrom
+                ? Math.ceil(
+                    (new Date(payload.frozenUntil) - new Date(payload.details.freezeFrom))
+                    / (24 * 60 * 60 * 1000)
+                  )
+                : undefined
+            );
+          nextState = createFreezePlan(nextState, {
+            mode: payload.mode || 'FIXED',
+            days: payload.days || legacyDays,
+          });
+        } catch (error) {
+          throw httpError(400, error.message);
+        }
         actionType = 'SUBSCRIPTION_FROZEN';
-        details = payload.details || {};
+        details = {
+          ...(payload.details || {}),
+          frozenUntil: nextState.frozenUntil.toISOString(),
+        };
       } else if (type === 'UNFREEZE') {
-        if (!current.frozen_until || new Date(current.frozen_until) <= new Date()) {
+        if (!nextState.frozenUntil || new Date(nextState.frozenUntil) <= new Date()) {
           throw httpError(400, 'Абонемент не заморожен');
         }
-        const subscriptionEnd = new Date(payload.subscriptionEnd);
-        if (Number.isNaN(subscriptionEnd.getTime()) || subscriptionEnd <= new Date()) {
-          throw httpError(400, 'Некорректный срок абонемента');
-        }
-        nextState.frozenUntil = null;
-        nextState.subscriptionEnd = subscriptionEnd;
+        nextState = completeFreezePlan(nextState);
         actionType = 'SUBSCRIPTION_UNFROZEN';
-        details = payload.details || {};
+        details = {
+          ...(payload.details || {}),
+          daysUsed: nextState.lastFreezeDaysUsed,
+          daysRestored: nextState.lastFreezeDaysRestored,
+        };
       } else if (type === 'REFUND') {
         const visits = await client.query(
           'SELECT 1 FROM shared_visits WHERE subscription_id = $1 LIMIT 1',
@@ -281,7 +325,15 @@ app.post('/v1/subscriptions/:syncId/command', async (req, res, next) => {
         if (visits.rowCount) {
           throw httpError(400, 'Возврат невозможен: по абонементу уже были посещения');
         }
-        nextState = { ...nextState, status: 'REFUNDED', visitsBalance: 0, frozenUntil: null };
+        nextState = {
+          ...nextState,
+          status: 'REFUNDED',
+          visitsBalance: 0,
+          frozenUntil: null,
+          freezeStartedAt: null,
+          freezeDaysReserved: 0,
+          freezeUntilManual: false,
+        };
         actionType = 'SALE_REFUNDED';
         details = payload.details || {};
       } else if (type === 'UPDATE') {
@@ -305,19 +357,30 @@ app.post('/v1/subscriptions/:syncId/command', async (req, res, next) => {
       const updated = await client.query(
         `UPDATE shared_subscriptions
          SET plan = $1, visits_balance = $2, subscription_end = $3, frozen_until = $4,
-             status = $5, version = version + 1, updated_at = NOW()
-         WHERE id = $6
+             freeze_started_at = $5, freeze_days_used = $6, freeze_days_reserved = $7,
+             freeze_until_manual = $8, status = $9, version = version + 1, updated_at = NOW()
+         WHERE id = $10
          RETURNING *`,
         [
           nextState.plan,
           nextState.visitsBalance,
           nextState.subscriptionEnd,
           nextState.frozenUntil,
+          nextState.freezeStartedAt,
+          nextState.freezeDaysUsed,
+          nextState.freezeDaysReserved,
+          nextState.freezeUntilManual,
           nextState.status,
           syncId,
         ]
       );
-      const result = serializeSubscription(updated.rows[0]);
+      const result = {
+        ...serializeSubscription(updated.rows[0]),
+        ...(type === 'UNFREEZE' && {
+          lastFreezeDaysUsed: nextState.lastFreezeDaysUsed || 0,
+          lastFreezeDaysRestored: nextState.lastFreezeDaysRestored || 0,
+        }),
+      };
       await queueBothSites(client, 'SUBSCRIPTION', syncId, result.version);
       if (actionType) {
         const action = await client.query(
@@ -365,9 +428,23 @@ app.post('/v1/checkins', async (req, res, next) => {
       );
       if (!selected.rowCount) throw httpError(404, 'Общий абонемент не найден');
       const subscription = selected.rows[0];
+      let subscriptionState = {
+        subscriptionEnd: subscription.subscription_end,
+        frozenUntil: subscription.frozen_until,
+        freezeStartedAt: subscription.freeze_started_at,
+        freezeDaysUsed: subscription.freeze_days_used,
+        freezeDaysReserved: subscription.freeze_days_reserved,
+        freezeUntilManual: subscription.freeze_until_manual,
+      };
+      if (subscriptionState.frozenUntil && new Date(subscriptionState.frozenUntil) <= new Date()) {
+        subscriptionState = completeFreezePlan(
+          subscriptionState,
+          new Date(subscriptionState.frozenUntil)
+        );
+      }
       if (subscription.status !== 'ACTIVE') throw httpError(400, 'Нет активного абонемента');
-      if (new Date(subscription.subscription_end) <= new Date()) throw httpError(400, 'Срок абонемента истек');
-      if (subscription.frozen_until && new Date(subscription.frozen_until) > new Date()) {
+      if (new Date(subscriptionState.subscriptionEnd) <= new Date()) throw httpError(400, 'Срок абонемента истек');
+      if (subscriptionState.frozenUntil && new Date(subscriptionState.frozenUntil) > new Date()) {
         throw httpError(400, 'Абонемент заморожен');
       }
 
@@ -395,11 +472,26 @@ app.post('/v1/checkins', async (req, res, next) => {
       const updated = await client.query(
         `UPDATE shared_subscriptions
          SET visits_balance = $1, status = $2,
-             frozen_until = CASE WHEN $2 = 'EXPIRED' THEN NULL ELSE frozen_until END,
+             subscription_end = $3,
+             frozen_until = CASE WHEN $2 = 'EXPIRED' THEN NULL::timestamptz ELSE $4::timestamptz END,
+             freeze_started_at = CASE WHEN $2 = 'EXPIRED' THEN NULL::timestamptz ELSE $5::timestamptz END,
+             freeze_days_used = $6,
+             freeze_days_reserved = CASE WHEN $2 = 'EXPIRED' THEN 0 ELSE $7 END,
+             freeze_until_manual = CASE WHEN $2 = 'EXPIRED' THEN false ELSE $8 END,
              version = version + 1, updated_at = NOW()
-         WHERE id = $3
+         WHERE id = $9
          RETURNING *`,
-        [nextBalance, nextStatus, syncId]
+        [
+          nextBalance,
+          nextStatus,
+          subscriptionState.subscriptionEnd,
+          subscriptionState.frozenUntil,
+          subscriptionState.freezeStartedAt,
+          subscriptionState.freezeDaysUsed,
+          subscriptionState.freezeDaysReserved,
+          subscriptionState.freezeUntilManual,
+          syncId,
+        ]
       );
       const visit = await client.query(
         `INSERT INTO shared_visits
@@ -450,6 +542,8 @@ app.use((error, req, res, next) => {
     ...(error.code && { code: error.code }),
   });
 });
+
+await ensureCentralSchema();
 
 const server = app.listen(config.port, () => {
   console.log(`[sync] listening on ${config.port}`);

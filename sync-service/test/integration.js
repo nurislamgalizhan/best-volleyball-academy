@@ -9,6 +9,7 @@ if (!secret) throw new Error('SYNC_HMAC_SECRET is required');
 
 const mercury = new Pool({ connectionString: process.env.MERCURY_DATABASE_URL });
 const bva = new Pool({ connectionString: process.env.BVA_DATABASE_URL });
+const central = new Pool({ connectionString: process.env.DATABASE_URL });
 
 function stableStringify(value) {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -225,6 +226,84 @@ async function run() {
     }
   });
 
+  const fixedFreeze = await syncRequest(
+    `/v1/subscriptions/${prepared.data.syncId}/command`,
+    {
+      sourceSite: 'MERCURY',
+      type: 'FREEZE',
+      mode: 'FIXED',
+      days: 10,
+      actorLabel: 'Integration test',
+      idempotencyKey: 'integration-freeze-fixed',
+    }
+  );
+  assert.equal(fixedFreeze.status, 200, JSON.stringify(fixedFreeze.data));
+  assert.equal(fixedFreeze.data.freezeDaysReserved, 10);
+  assert.equal(fixedFreeze.data.freezeDaysRemaining, undefined);
+
+  await waitUntil(async () => {
+    for (const pool of [mercury, bva]) {
+      const state = await pool.query(
+        `SELECT "freezeDaysReserved", "freezeUntilManual", "frozenUntil"
+         FROM user_subscriptions WHERE "syncId" = $1`,
+        [prepared.data.syncId]
+      );
+      assert.equal(state.rows[0].freezeDaysReserved, 10);
+      assert.equal(state.rows[0].freezeUntilManual, false);
+      assert.ok(state.rows[0].frozenUntil);
+    }
+  });
+
+  const manuallyUnfrozen = await syncRequest(
+    `/v1/subscriptions/${prepared.data.syncId}/command`,
+    {
+      sourceSite: 'BVA',
+      type: 'UNFREEZE',
+      actorLabel: 'Integration test',
+      idempotencyKey: 'integration-unfreeze-fixed',
+    }
+  );
+  assert.equal(manuallyUnfrozen.status, 200, JSON.stringify(manuallyUnfrozen.data));
+  assert.equal(manuallyUnfrozen.data.freezeDaysUsed, 1);
+  assert.equal(manuallyUnfrozen.data.freezeDaysReserved, 0);
+  assert.equal(manuallyUnfrozen.data.lastFreezeDaysRestored, 9);
+
+  const untilManual = await syncRequest(
+    `/v1/subscriptions/${prepared.data.syncId}/command`,
+    {
+      sourceSite: 'MERCURY',
+      type: 'FREEZE',
+      mode: 'UNTIL_MANUAL',
+      actorLabel: 'Integration test',
+      idempotencyKey: 'integration-freeze-until-manual',
+    }
+  );
+  assert.equal(untilManual.status, 200, JSON.stringify(untilManual.data));
+  assert.equal(untilManual.data.freezeDaysReserved, 14);
+  assert.equal(untilManual.data.freezeUntilManual, true);
+
+  await central.query(
+    `UPDATE shared_subscriptions
+     SET freeze_started_at = NOW() - INTERVAL '14 days',
+         frozen_until = NOW() - INTERVAL '1 second'
+     WHERE id = $1`,
+    [prepared.data.syncId]
+  );
+
+  await waitUntil(async () => {
+    for (const pool of [mercury, bva]) {
+      const state = await pool.query(
+        `SELECT "freezeDaysUsed", "freezeDaysReserved", "freezeUntilManual", "frozenUntil"
+         FROM user_subscriptions WHERE "syncId" = $1`,
+        [prepared.data.syncId]
+      );
+      assert.equal(state.rows[0].freezeDaysUsed, 15);
+      assert.equal(state.rows[0].freezeDaysReserved, 0);
+      assert.equal(state.rows[0].freezeUntilManual, false);
+      assert.equal(state.rows[0].frozenUntil, null);
+    }
+  }, 15_000);
+
   const sales = await Promise.all([
     mercury.query('SELECT COUNT(*)::int AS count FROM sale_logs'),
     bva.query('SELECT COUNT(*)::int AS count FROM sale_logs'),
@@ -236,7 +315,7 @@ async function run() {
 
 run()
   .finally(async () => {
-    await Promise.all([mercury.end(), bva.end()]);
+    await Promise.all([mercury.end(), bva.end(), central.end()]);
   })
   .catch((error) => {
     console.error(error);

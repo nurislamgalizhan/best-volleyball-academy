@@ -12,6 +12,16 @@ export const sitePools = {
   BVA: bvaPool,
 };
 
+export async function ensureCentralSchema() {
+  await centralPool.query(`
+    ALTER TABLE shared_subscriptions
+      ADD COLUMN IF NOT EXISTS freeze_started_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS freeze_days_used INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS freeze_days_reserved INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS freeze_until_manual BOOLEAN NOT NULL DEFAULT false
+  `);
+}
+
 export async function withTransaction(pool, callback) {
   const client = await pool.connect();
   try {

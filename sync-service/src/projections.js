@@ -1,5 +1,6 @@
 import { centralPool, sitePools, withTransaction } from './db.js';
 import { oppositeSite, siteConfig } from './config.js';
+import { completeFreezePlan } from './freeze.js';
 
 function normalizePlan(plan) {
   return {
@@ -132,9 +133,11 @@ async function ensureSubscriptionProjection(client, site, subscription) {
       `UPDATE user_subscriptions
        SET "userId" = $1, "sectionId" = $2, "tariffId" = $3,
            "visitsBalance" = $4, "subscriptionEnd" = $5, "frozenUntil" = $6,
-           status = $7, "syncId" = $8, "originSite" = $9,
-           "projectionVersion" = $10, "updatedAt" = NOW()
-       WHERE id = $11 AND "projectionVersion" <= $10`,
+           "freezeStartedAt" = $7, "freezeDaysUsed" = $8,
+           "freezeDaysReserved" = $9, "freezeUntilManual" = $10,
+           status = $11, "syncId" = $12, "originSite" = $13,
+           "projectionVersion" = $14, "updatedAt" = NOW()
+       WHERE id = $15 AND "projectionVersion" <= $14`,
       [
         userId,
         sectionId,
@@ -142,6 +145,10 @@ async function ensureSubscriptionProjection(client, site, subscription) {
         subscription.visits_balance,
         subscription.subscription_end,
         subscription.frozen_until,
+        subscription.freeze_started_at,
+        subscription.freeze_days_used,
+        subscription.freeze_days_reserved,
+        subscription.freeze_until_manual,
         subscription.status,
         subscription.id,
         subscription.origin_site,
@@ -168,8 +175,9 @@ async function ensureSubscriptionProjection(client, site, subscription) {
   const inserted = await client.query(
     `INSERT INTO user_subscriptions
       ("userId", "sectionId", "tariffId", "visitsBalance", "subscriptionEnd", "frozenUntil",
+       "freezeStartedAt", "freezeDaysUsed", "freezeDaysReserved", "freezeUntilManual",
        status, "syncId", "originSite", "projectionVersion", "createdAt", "updatedAt")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())
      RETURNING id`,
     [
       userId,
@@ -178,6 +186,10 @@ async function ensureSubscriptionProjection(client, site, subscription) {
       subscription.visits_balance,
       subscription.subscription_end,
       subscription.frozen_until,
+      subscription.freeze_started_at,
+      subscription.freeze_days_used,
+      subscription.freeze_days_reserved,
+      subscription.freeze_until_manual,
       subscription.status,
       subscription.id,
       subscription.origin_site,
@@ -411,9 +423,61 @@ export async function reconcileAll() {
     }
   }
 
+  const dueFreezes = await centralPool.query(
+    `SELECT id FROM shared_subscriptions
+     WHERE status = 'ACTIVE' AND frozen_until IS NOT NULL AND frozen_until <= NOW()`
+  );
+  for (const due of dueFreezes.rows) {
+    await withTransaction(centralPool, async (client) => {
+      const selected = await client.query(
+        `SELECT * FROM shared_subscriptions
+         WHERE id = $1 AND frozen_until IS NOT NULL AND frozen_until <= NOW()
+         FOR UPDATE`,
+        [due.id]
+      );
+      if (!selected.rowCount) return;
+      const row = selected.rows[0];
+      const completed = completeFreezePlan({
+        subscriptionEnd: row.subscription_end,
+        frozenUntil: row.frozen_until,
+        freezeStartedAt: row.freeze_started_at,
+        freezeDaysUsed: row.freeze_days_used,
+        freezeDaysReserved: row.freeze_days_reserved,
+        freezeUntilManual: row.freeze_until_manual,
+      }, new Date(row.frozen_until));
+      const updated = await client.query(
+        `UPDATE shared_subscriptions
+         SET subscription_end = $1, frozen_until = NULL, freeze_started_at = NULL,
+             freeze_days_used = $2, freeze_days_reserved = 0,
+             freeze_until_manual = false, version = version + 1, updated_at = NOW()
+         WHERE id = $3
+         RETURNING version`,
+        [completed.subscriptionEnd, completed.freezeDaysUsed, row.id]
+      );
+      const action = await client.query(
+        `INSERT INTO shared_actions
+          (subscription_id, source_site, actor_label, action_type, details)
+         VALUES ($1, $2, 'Автоматическая разморозка', 'SUBSCRIPTION_UNFROZEN', $3)
+         RETURNING id`,
+        [
+          row.id,
+          row.origin_site,
+          {
+            automatic: true,
+            daysUsed: completed.lastFreezeDaysUsed,
+            daysRestored: completed.lastFreezeDaysRestored,
+          },
+        ]
+      );
+      await queueBothSites(client, 'SUBSCRIPTION', row.id, updated.rows[0].version);
+      await queueBothSites(client, 'ACTION', action.rows[0].id, 0);
+    });
+  }
+
   const expired = await centralPool.query(
     `UPDATE shared_subscriptions
      SET status = 'EXPIRED', visits_balance = 0, frozen_until = NULL,
+         freeze_started_at = NULL, freeze_days_reserved = 0, freeze_until_manual = false,
          version = version + 1, updated_at = NOW()
      WHERE status = 'ACTIVE' AND subscription_end <= NOW()
      RETURNING id, version`
