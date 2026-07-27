@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.jsx';
+import BrandLogo from '../../components/BrandLogo.jsx';
 
 const navItems = [
   {
@@ -34,9 +35,7 @@ export default function VisitorLayout() {
       <header className="bg-white border-b border-slate-100 sticky top-0 z-10">
         <div className="max-w-lg mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 bg-brand-900 text-white rounded-lg flex items-center justify-center font-black text-[10px]">
-              BVA
-            </div>
+            <BrandLogo className="w-7 h-7 rounded-md flex-shrink-0" />
             <span className="font-semibold text-slate-800 text-sm">Best Volleyball Academy</span>
           </div>
           <button onClick={handleLogout} className="text-sm text-slate-400 hover:text-slate-600 transition-colors">

@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '../api/axios.js';
 import { useAuth } from '../context/AuthContext.jsx';
+import BrandLogo from '../components/BrandLogo.jsx';
 import Button from '../components/ui/Button.jsx';
 import { formatPhoneDisplay } from '../utils/phone.js';
 import { isStaffRole } from '../utils/roles.js';
@@ -117,9 +118,7 @@ export default function VerifyPage() {
     <div className="min-h-screen bg-neutral-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-brand-900 rounded-2xl mb-4 shadow-lg">
-            <span className="text-white font-black text-lg">BVA</span>
-          </div>
+          <BrandLogo className="w-16 h-16 mx-auto mb-4 rounded-xl shadow-lg" />
           <h1 className="text-2xl font-bold text-slate-950">Подтверждение</h1>
           <p className="text-slate-500 mt-2">Введите код из WhatsApp</p>
           {phone && <p className="text-brand-700 font-medium mt-1">{formatPhoneDisplay(phone)}</p>}

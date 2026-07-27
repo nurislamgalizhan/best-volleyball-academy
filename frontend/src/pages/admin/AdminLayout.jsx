@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '../../api/axios.js';
 import { useAuth } from '../../context/AuthContext.jsx';
+import BrandLogo from '../../components/BrandLogo.jsx';
 import { isSuperAdminRole } from '../../utils/roles.js';
 
 const navItems = [
@@ -87,9 +88,7 @@ export default function AdminLayout() {
       >
         <div className="p-6 border-b border-slate-700">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-brand-50 text-brand-900 rounded-xl flex items-center justify-center flex-shrink-0 font-black text-xs">
-              BVA
-            </div>
+            <BrandLogo className="w-9 h-9 rounded-lg flex-shrink-0" />
             <div>
               <p className="font-semibold text-sm">Best Volleyball Academy</p>
               <p className="text-xs text-slate-400">
@@ -232,9 +231,7 @@ export default function AdminLayout() {
             </svg>
           </button>
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 bg-brand-900 text-white rounded-lg flex items-center justify-center font-black text-[10px]">
-              BVA
-            </div>
+            <BrandLogo className="w-7 h-7 rounded-md flex-shrink-0" />
             <span className="font-semibold text-slate-800 text-sm">Best Volleyball Academy</span>
           </div>
         </header>

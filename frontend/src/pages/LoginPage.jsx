@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '../api/axios.js';
 import { useAuth } from '../context/AuthContext.jsx';
+import BrandLogo from '../components/BrandLogo.jsx';
 import Button from '../components/ui/Button.jsx';
 import Input from '../components/ui/Input.jsx';
 import PhoneInput from '../components/ui/PhoneInput.jsx';
@@ -101,9 +102,10 @@ export default function LoginPage() {
     <div className="min-h-screen bg-neutral-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-brand-900 rounded-2xl mb-4 shadow-lg">
-            <span className="text-white font-black text-lg">BVA</span>
-          </div>
+          <BrandLogo
+            variant="full"
+            className="w-44 h-44 mx-auto mb-4 rounded-lg shadow-lg"
+          />
           <h1 className="text-2xl font-bold text-slate-950">Best Volleyball Academy</h1>
           <p className="text-slate-500 mt-1">Войдите в свой аккаунт</p>
         </div>
