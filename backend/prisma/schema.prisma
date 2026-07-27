@@ -15,9 +15,13 @@ enum Role {
 
 enum AdminActionType {
   USER_CREATED
+  USER_DELETED
   ADMIN_PROMOTED
   ADMIN_DEMOTED
   ADMIN_PASSWORD_RESET
+  CLIENT_NOTE_CREATED
+  CLIENT_NOTE_UPDATED
+  CLIENT_NOTE_DELETED
   VISITS_BALANCE_UPDATED
   TARIFF_SOLD
   SALE_UPDATED
@@ -81,6 +85,8 @@ model User {
   sectionMemberships SectionMembership[]
   adminActions      AdminActionLog[] @relation("AdminActor")
   targetAdminActions AdminActionLog[] @relation("AdminTarget")
+  clientNotes ClientNote[] @relation("ClientNotes")
+  authoredClientNotes ClientNote[] @relation("ClientNoteAuthor")
 
   verificationCode        String?
   verificationCodeExpires DateTime?
@@ -217,6 +223,22 @@ model RegistrationAttempt {
   createdAt               DateTime  @default(now())
 
   @@map("registration_attempts")
+}
+
+model ClientNote {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  authorId  Int?
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User  @relation("ClientNotes", fields: [userId], references: [id], onDelete: Cascade)
+  author User? @relation("ClientNoteAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([authorId])
+  @@map("client_notes")
 }
 
 model AdminActionLog {

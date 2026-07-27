@@ -6,6 +6,10 @@ import Pagination from '../../components/ui/Pagination.jsx';
 
 const ACTION_LABELS = {
   USER_CREATED: 'Создан пользователь',
+  USER_DELETED: 'Клиент полностью удален',
+  CLIENT_NOTE_CREATED: 'Добавлена заметка клиента',
+  CLIENT_NOTE_UPDATED: 'Изменена заметка клиента',
+  CLIENT_NOTE_DELETED: 'Удалена заметка клиента',
   VISITS_BALANCE_UPDATED: 'Изменен баланс посещений',
   TARIFF_SOLD: 'Продан абонемент',
   SALE_UPDATED: 'Исправлена продажа',

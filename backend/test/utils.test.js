@@ -19,7 +19,11 @@ import {
   freezePublicState,
 } from '../src/utils/freeze.js';
 import { isStaffRole, isSuperAdminRole } from '../src/utils/roles.js';
-import { adminPasswordSchema } from '../src/schemas/index.js';
+import {
+  adminPasswordSchema,
+  clientNoteSchema,
+  deleteUserSchema,
+} from '../src/schemas/index.js';
 import { hashPassword, verifyPassword } from '../src/utils/password.js';
 
 test('BVA staff roles keep super-admin-only permissions separate', () => {
@@ -34,6 +38,18 @@ test('admin password validation requires a deliberate password of at least eight
   assert.equal(adminPasswordSchema.parse({ password: 'Strong pass 2026' }).password, 'Strong pass 2026');
   assert.equal(adminPasswordSchema.safeParse({ password: 'short' }).success, false);
   assert.equal(adminPasswordSchema.safeParse({}).success, false);
+});
+
+test('client notes are trimmed, bounded, and cannot be empty', () => {
+  assert.equal(clientNoteSchema.parse({ content: '  Оплатил следующий месяц  ' }).content, 'Оплатил следующий месяц');
+  assert.equal(clientNoteSchema.safeParse({ content: '   ' }).success, false);
+  assert.equal(clientNoteSchema.safeParse({ content: 'x'.repeat(2001) }).success, false);
+});
+
+test('permanent client deletion requires an explicit confirmation flag', () => {
+  assert.equal(deleteUserSchema.parse({ confirmDeletion: true }).confirmDeletion, true);
+  assert.equal(deleteUserSchema.safeParse({ confirmDeletion: false }).success, false);
+  assert.equal(deleteUserSchema.safeParse({}).success, false);
 });
 
 test('password created for an administrator is accepted by the login verifier unchanged', async () => {

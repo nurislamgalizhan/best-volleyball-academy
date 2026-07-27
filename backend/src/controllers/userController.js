@@ -1,5 +1,15 @@
 import { prisma } from '../db.js';
-import { usersQuerySchema, adjustUserSchema, createUserSchema, logsQuerySchema, freezeSchema, cancelSubscriptionSchema, activateSubscriptionSchema } from '../schemas/index.js';
+import {
+  usersQuerySchema,
+  adjustUserSchema,
+  createUserSchema,
+  logsQuerySchema,
+  freezeSchema,
+  cancelSubscriptionSchema,
+  activateSubscriptionSchema,
+  clientNoteSchema,
+  deleteUserSchema,
+} from '../schemas/index.js';
 import { createAdminAction } from '../utils/adminActions.js';
 import { hashPassword } from '../utils/password.js';
 import { clearExpiredVisits, clearExpiredVisitsForUsers } from '../utils/subscription.js';
@@ -157,6 +167,14 @@ export async function getUserById(req, res, next) {
             subscription: { select: { id: true, visitsBalance: true, subscriptionEnd: true, status: true } },
           },
         },
+        clientNotes: {
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          take: 1,
+          include: {
+            author: { select: { id: true, firstName: true, lastName: true } },
+          },
+        },
+        _count: { select: { clientNotes: true } },
       },
     });
 
@@ -172,8 +190,11 @@ export async function getUserById(req, res, next) {
     const activeSubscriptions = subscriptions.filter((subscription) => subscription.status === 'ACTIVE');
     const isUnlimitedSubscription = activeSubscriptions.some((subscription) => subscription.tariff?.visitsAmount === null);
 
+    const publicUser = userPublic(user);
+    const { clientNotes, _count, ...userData } = publicUser;
+
     res.json({
-      ...userPublic(user),
+      ...userData,
       subscriptions,
       visitLogs: user.visitLogs.map((visit) => ({
         ...visit,
@@ -181,6 +202,8 @@ export async function getUserById(req, res, next) {
       })),
       activeSubscriptions,
       isUnlimitedSubscription: !!isUnlimitedSubscription,
+      latestNote: clientNotes[0] || null,
+      notesCount: _count.clientNotes,
     });
   } catch (err) {
     next(err);
@@ -302,27 +325,180 @@ export async function adjustUser(req, res, next) {
   }
 }
 
-export async function deactivateUser(req, res, next) {
+export async function getClientNotes(req, res, next) {
   try {
     const id = parseInt(req.params.id, 10);
-    const user = await prisma.user.findUnique({ where: { id } });
-    if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
-    if (isStaffRole(user.role)) return res.status(403).json({ message: 'Нельзя деактивировать администратора' });
+    const { page, limit } = logsQuerySchema.parse(req.query);
+    const user = await prisma.user.findFirst({ where: { id, isActive: true, role: 'VISITOR' } });
+    if (!user) return res.status(404).json({ message: 'Клиент не найден' });
 
-    await prisma.$transaction(async (tx) => {
-      await tx.user.update({ where: { id }, data: { isActive: false } });
+    const where = { userId: id };
+    const [notes, total] = await Promise.all([
+      prisma.clientNote.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        include: {
+          author: { select: { id: true, firstName: true, lastName: true } },
+        },
+      }),
+      prisma.clientNote.count({ where }),
+    ]);
+
+    res.json({
+      data: notes,
+      meta: { total, page, limit, pages: Math.ceil(total / limit) },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function createClientNote(req, res, next) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { content } = clientNoteSchema.parse(req.body);
+    const user = await prisma.user.findFirst({ where: { id, isActive: true, role: 'VISITOR' } });
+    if (!user) return res.status(404).json({ message: 'Клиент не найден' });
+
+    const note = await prisma.$transaction(async (tx) => {
+      const created = await tx.clientNote.create({
+        data: { userId: id, authorId: req.userId, content },
+        include: {
+          author: { select: { id: true, firstName: true, lastName: true } },
+        },
+      });
       await createAdminAction(tx, {
         adminId: req.userId,
         targetUserId: id,
-        action: 'USER_DEACTIVATED',
-        details: {
-          phone: user.phone,
-          fullName: `${user.firstName} ${user.lastName}`,
+        action: 'CLIENT_NOTE_CREATED',
+        details: { noteId: created.id },
+      });
+      return created;
+    });
+
+    res.status(201).json(note);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function updateClientNote(req, res, next) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const noteId = parseInt(req.params.noteId, 10);
+    const { content } = clientNoteSchema.parse(req.body);
+    const existing = await prisma.clientNote.findFirst({ where: { id: noteId, userId: id } });
+    if (!existing) return res.status(404).json({ message: 'Заметка не найдена' });
+
+    const note = await prisma.$transaction(async (tx) => {
+      const updated = await tx.clientNote.update({
+        where: { id: noteId },
+        data: { content },
+        include: {
+          author: { select: { id: true, firstName: true, lastName: true } },
         },
+      });
+      await createAdminAction(tx, {
+        adminId: req.userId,
+        targetUserId: id,
+        action: 'CLIENT_NOTE_UPDATED',
+        details: { noteId },
+      });
+      return updated;
+    });
+
+    res.json(note);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function deleteClientNote(req, res, next) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const noteId = parseInt(req.params.noteId, 10);
+    const existing = await prisma.clientNote.findFirst({ where: { id: noteId, userId: id } });
+    if (!existing) return res.status(404).json({ message: 'Заметка не найдена' });
+
+    await prisma.$transaction(async (tx) => {
+      await tx.clientNote.delete({ where: { id: noteId } });
+      await createAdminAction(tx, {
+        adminId: req.userId,
+        targetUserId: id,
+        action: 'CLIENT_NOTE_DELETED',
+        details: { noteId },
       });
     });
 
-    res.json({ message: 'Пользователь деактивирован' });
+    res.json({ message: 'Заметка удалена' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function deleteUser(req, res, next) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    deleteUserSchema.parse(req.body);
+
+    const user = await prisma.user.findUnique({
+      where: { id },
+      include: {
+        subscriptions: {
+          where: { syncId: { not: null } },
+          select: { id: true },
+          take: 1,
+        },
+        visitLogs: {
+          where: { syncId: { not: null } },
+          select: { id: true },
+          take: 1,
+        },
+      },
+    });
+    if (!user) return res.status(404).json({ message: 'Клиент не найден' });
+    if (isStaffRole(user.role)) {
+      return res.status(403).json({ message: 'Администраторов можно удалять только через управление ролями' });
+    }
+    if (user.syncMemberId || user.subscriptions.length || user.visitLogs.length) {
+      return res.status(409).json({
+        code: 'SYNCED_CLIENT_DELETE_BLOCKED',
+        message: 'Клиент связан с mmedet.kz и не может быть удален только из BVA. Сначала нужно безопасно отключить его от общей синхронизации.',
+      });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const visits = await tx.visitLog.deleteMany({ where: { userId: id } });
+      const subscriptions = await tx.userSubscription.deleteMany({ where: { userId: id } });
+      const sales = await tx.saleLog.deleteMany({ where: { userId: id } });
+      const memberships = await tx.sectionMembership.deleteMany({ where: { userId: id } });
+      const notes = await tx.clientNote.deleteMany({ where: { userId: id } });
+      await tx.adminActionLog.deleteMany({
+        where: {
+          OR: [
+            { targetUserId: id },
+            { adminId: id },
+          ],
+        },
+      });
+      await tx.registrationAttempt.deleteMany({ where: { phone: user.phone } });
+      await tx.user.delete({ where: { id } });
+      await createAdminAction(tx, {
+        adminId: req.userId,
+        action: 'USER_DELETED',
+      });
+      return {
+        visits: visits.count,
+        subscriptions: subscriptions.count,
+        sales: sales.count,
+        memberships: memberships.count,
+        notes: notes.count,
+      };
+    });
+
+    res.json({ message: 'Клиент и все связанные данные удалены', deleted: result });
   } catch (err) {
     next(err);
   }

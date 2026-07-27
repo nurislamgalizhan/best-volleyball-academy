@@ -141,6 +141,20 @@ export const createUserSchema = z.object({
   password: z.string().min(6).max(200),
 });
 
+export const clientNoteSchema = z.object({
+  content: z
+    .string()
+    .trim()
+    .min(1, 'Заметка не может быть пустой')
+    .max(2000, 'Максимум 2000 символов'),
+});
+
+export const deleteUserSchema = z.object({
+  confirmDeletion: z.literal(true, {
+    errorMap: () => ({ message: 'Подтвердите полное удаление клиента' }),
+  }),
+});
+
 export const createAdminSchema = z.object({
   firstName: nameSchema,
   lastName: nameSchema,

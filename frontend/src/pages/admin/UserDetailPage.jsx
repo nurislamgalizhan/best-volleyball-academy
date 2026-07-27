@@ -8,7 +8,10 @@ import Input from '../../components/ui/Input.jsx';
 import Modal from '../../components/ui/Modal.jsx';
 import SellTariffModal from '../../components/admin/SellTariffModal.jsx';
 import FreezeSubscriptionModal from '../../components/FreezeSubscriptionModal.jsx';
+import Pagination from '../../components/ui/Pagination.jsx';
 import { useTariffs } from '../../hooks/useTariffs.js';
+import { useAuth } from '../../context/AuthContext.jsx';
+import { isSuperAdminRole } from '../../utils/roles.js';
 
 const PAYMENT_LABEL = { CASH: 'Наличные', KASPI: 'Kaspi', HALYK: 'Halyk', MIXED: 'Смешанная' };
 const SUBSCRIPTION_STATUS_LABEL = {
@@ -21,6 +24,7 @@ const SUBSCRIPTION_STATUS_LABEL = {
 export default function UserDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user: currentUser } = useAuth();
   const { tariffs, fetchTariffs } = useTariffs(true);
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -39,6 +43,15 @@ export default function UserDetailPage() {
   const [subscriptionToCancel, setSubscriptionToCancel] = useState(null);
   const [subscriptionToActivate, setSubscriptionToActivate] = useState(null);
   const [activateForm, setActivateForm] = useState({ visitsBalance: '' });
+  const [noteEditorOpen, setNoteEditorOpen] = useState(false);
+  const [editingNote, setEditingNote] = useState(null);
+  const [noteContent, setNoteContent] = useState('');
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [notes, setNotes] = useState([]);
+  const [notesMeta, setNotesMeta] = useState({ page: 1, pages: 1, total: 0 });
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState('');
 
   const fetchUser = async () => {
     try {
@@ -58,6 +71,8 @@ export default function UserDetailPage() {
   const subscriptions = user?.subscriptions || [];
   const activeSubscriptions = subscriptions.filter((s) => s.status === 'ACTIVE');
   const tariffOptions = useMemo(() => tariffs.map((t) => ({ ...t, label: `${t.section?.name || 'Секция'} · ${t.name}` })), [tariffs]);
+  const canDeleteUser = isSuperAdminRole(currentUser?.role);
+  const isSyncedUser = Boolean(user?.syncMemberId || subscriptions.some((subscription) => subscription.isShared));
 
   const openAdjust = (subscription) => {
     setSelectedSubscription(subscription);
@@ -233,6 +248,84 @@ export default function UserDetailPage() {
     }
   };
 
+  const openCreateNote = () => {
+    setEditingNote(null);
+    setNoteContent('');
+    setNoteEditorOpen(true);
+  };
+
+  const openEditNote = (note) => {
+    setNotesOpen(false);
+    setEditingNote(note);
+    setNoteContent(note.content);
+    setNoteEditorOpen(true);
+  };
+
+  const fetchNotes = async (page = 1) => {
+    setNotesLoading(true);
+    try {
+      const { data } = await api.get(`/users/${id}/notes`, { params: { page, limit: 20 } });
+      setNotes(data.data);
+      setNotesMeta(data.meta);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Не удалось загрузить заметки');
+    } finally {
+      setNotesLoading(false);
+    }
+  };
+
+  const openAllNotes = () => {
+    setNotesOpen(true);
+    fetchNotes(1);
+  };
+
+  const handleSaveNote = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      if (editingNote) {
+        await api.patch(`/users/${id}/notes/${editingNote.id}`, { content: noteContent });
+        toast.success('Заметка обновлена');
+      } else {
+        await api.post(`/users/${id}/notes`, { content: noteContent });
+        toast.success('Заметка добавлена');
+      }
+      setNoteEditorOpen(false);
+      setEditingNote(null);
+      setNoteContent('');
+      await fetchUser();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Не удалось сохранить заметку');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteNote = async (note) => {
+    if (!confirm('Удалить эту заметку без возможности восстановления?')) return;
+    try {
+      await api.delete(`/users/${id}/notes/${note.id}`);
+      toast.success('Заметка удалена');
+      await Promise.all([fetchUser(), notesOpen ? fetchNotes(notesMeta.page) : Promise.resolve()]);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Не удалось удалить заметку');
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    if (deleteConfirmation !== 'УДАЛИТЬ') return;
+    setSaving(true);
+    try {
+      await api.delete(`/users/${id}`, { data: { confirmDeletion: true } });
+      toast.success('Клиент и все его данные удалены');
+      navigate('/admin/users', { replace: true });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Не удалось удалить клиента');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) return <div className="p-8 text-slate-400">Загрузка...</div>;
   if (!user) return null;
 
@@ -248,6 +341,38 @@ export default function UserDetailPage() {
         </div>
         <Button onClick={() => setSellOpen(true)}>Продать абонемент</Button>
       </div>
+
+      <section className="bg-white rounded-lg border border-slate-200 mb-6">
+        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-100">
+          <div>
+            <h2 className="font-semibold text-slate-800">Заметки</h2>
+            <p className="text-xs text-slate-400 mt-0.5">Всего: {user.notesCount || 0}</p>
+          </div>
+          <Button size="sm" variant="secondary" onClick={openCreateNote}>Добавить заметку</Button>
+        </div>
+        {user.latestNote ? (
+          <div className="p-4">
+            <p className="text-sm text-slate-700 whitespace-pre-wrap break-words">{user.latestNote.content}</p>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mt-3">
+              <p className="text-xs text-slate-400">
+                {format(new Date(user.latestNote.updatedAt), 'dd.MM.yyyy HH:mm')}
+                {user.latestNote.author
+                  ? ` · ${user.latestNote.author.firstName} ${user.latestNote.author.lastName}`
+                  : ''}
+              </p>
+              <div className="flex items-center gap-3">
+                <button type="button" onClick={() => openEditNote(user.latestNote)} className="text-xs font-medium text-slate-600 hover:text-slate-900">Изменить</button>
+                <button type="button" onClick={() => handleDeleteNote(user.latestNote)} className="text-xs font-medium text-red-600 hover:text-red-700">Удалить</button>
+                {(user.notesCount || 0) > 1 && (
+                  <button type="button" onClick={openAllNotes} className="text-xs font-medium text-brand-600 hover:text-brand-700">Показать все</button>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p className="p-5 text-center text-sm text-slate-400">Заметок пока нет</p>
+        )}
+      </section>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
         {subscriptions.length === 0 ? (
@@ -321,7 +446,7 @@ export default function UserDetailPage() {
         )}
       </div>
 
-      <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+      <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden mb-6">
         <div className="p-4 border-b border-slate-100"><h2 className="font-semibold text-slate-800">История покупок</h2></div>
         {(user.saleLogs || []).length === 0 ? <p className="p-6 text-center text-slate-400 text-sm">Нет записей</p> : (
           <div className="divide-y divide-slate-50">
@@ -342,7 +467,135 @@ export default function UserDetailPage() {
         )}
       </div>
 
+      {canDeleteUser && (
+        <section className="border border-red-200 bg-red-50 rounded-lg p-4">
+          <h2 className="font-semibold text-red-800">Удаление клиента</h2>
+          <p className="text-sm text-red-700 mt-1">
+            Клиент, его абонементы, посещения, продажи и заметки будут удалены без возможности восстановления.
+          </p>
+          {isSyncedUser ? (
+            <p className="text-sm text-red-700 font-medium mt-3">
+              Этот клиент связан с mmedet.kz. Локальное удаление заблокировано, чтобы не повредить общую синхронизацию.
+            </p>
+          ) : (
+            <Button variant="danger" size="sm" className="mt-4" onClick={() => setDeleteOpen(true)}>
+              Удалить клиента
+            </Button>
+          )}
+        </section>
+      )}
+
       <SellTariffModal isOpen={sellOpen} onClose={() => setSellOpen(false)} user={user} onSuccess={fetchUser} />
+
+      <Modal
+        isOpen={noteEditorOpen}
+        onClose={() => setNoteEditorOpen(false)}
+        title={editingNote ? 'Изменить заметку' : 'Новая заметка'}
+      >
+        <form onSubmit={handleSaveNote} className="space-y-4">
+          <div>
+            <label htmlFor="client-note" className="block text-sm font-medium text-slate-700 mb-1">Текст заметки</label>
+            <textarea
+              id="client-note"
+              value={noteContent}
+              onChange={(e) => setNoteContent(e.target.value)}
+              rows={5}
+              maxLength={2000}
+              className="w-full resize-y rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500"
+              required
+              autoFocus
+            />
+            <p className="text-xs text-slate-400 mt-1 text-right">{noteContent.length}/2000</p>
+          </div>
+          <div className="flex gap-3">
+            <Button type="button" variant="secondary" className="flex-1" onClick={() => setNoteEditorOpen(false)}>Отмена</Button>
+            <Button type="submit" loading={saving} disabled={!noteContent.trim()} className="flex-1">Сохранить</Button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal isOpen={notesOpen} onClose={() => setNotesOpen(false)} title="Все заметки" size="lg">
+        {notesLoading ? (
+          <p className="py-8 text-center text-sm text-slate-400">Загрузка...</p>
+        ) : notes.length === 0 ? (
+          <p className="py-8 text-center text-sm text-slate-400">Заметок пока нет</p>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {notes.map((note) => (
+              <article key={note.id} className="py-4 first:pt-0 last:pb-0">
+                <p className="text-sm text-slate-700 whitespace-pre-wrap break-words">{note.content}</p>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mt-3">
+                  <p className="text-xs text-slate-400">
+                    {format(new Date(note.updatedAt), 'dd.MM.yyyy HH:mm')}
+                    {note.author ? ` · ${note.author.firstName} ${note.author.lastName}` : ''}
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <button type="button" onClick={() => openEditNote(note)} className="text-xs font-medium text-slate-600 hover:text-slate-900">Изменить</button>
+                    <button type="button" onClick={() => handleDeleteNote(note)} className="text-xs font-medium text-red-600 hover:text-red-700">Удалить</button>
+                  </div>
+                </div>
+              </article>
+            ))}
+            {notesMeta.pages > 1 && (
+              <div className="pt-4">
+                <Pagination
+                  page={notesMeta.page}
+                  pages={notesMeta.pages}
+                  onPageChange={fetchNotes}
+                />
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={deleteOpen}
+        onClose={() => {
+          setDeleteOpen(false);
+          setDeleteConfirmation('');
+        }}
+        title="Полное удаление клиента"
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+            <p className="font-semibold">Это действие необратимо.</p>
+            <p className="mt-1">
+              Будут стерты профиль {user.firstName} {user.lastName}, вся история посещений, абонементов,
+              продаж и заметок. Итоги бухгалтерии изменятся.
+            </p>
+          </div>
+          <Input
+            label="Для подтверждения введите УДАЛИТЬ"
+            value={deleteConfirmation}
+            onChange={(e) => setDeleteConfirmation(e.target.value)}
+            autoComplete="off"
+          />
+          <div className="flex gap-3">
+            <Button
+              type="button"
+              variant="secondary"
+              className="flex-1"
+              onClick={() => {
+                setDeleteOpen(false);
+                setDeleteConfirmation('');
+              }}
+            >
+              Отмена
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              className="flex-1"
+              disabled={deleteConfirmation !== 'УДАЛИТЬ'}
+              loading={saving}
+              onClick={handleDeleteUser}
+            >
+              Удалить навсегда
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal isOpen={checkinOpen} onClose={() => setCheckinOpen(false)} title={`Списать посещение · ${selectedSubscription?.section?.name || ''}`}>
         <form onSubmit={handleAdminCheckin} className="space-y-4">
