@@ -1,4 +1,3 @@
-import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../db.js';
 import {
@@ -18,6 +17,7 @@ import {
 } from '../utils/authRateLimit.js';
 import { buildUserProfile } from '../utils/userProfile.js';
 import { isStaffRole } from '../utils/roles.js';
+import { hashPassword, verifyPassword } from '../utils/password.js';
 
 const CODE_TTL_MS = 10 * 60 * 1000;
 const RESEND_COOLDOWN_SECONDS = 60;
@@ -123,7 +123,7 @@ export async function register(req, res, next) {
       },
     });
 
-    const passwordHash = await bcrypt.hash(password, 12);
+    const passwordHash = await hashPassword(password);
     const attempt = await prisma.registrationAttempt.upsert({
       where: { phone },
       update: { passwordHash, firstName, lastName, verificationCode: null, verificationCodeExpires: null },
@@ -227,7 +227,7 @@ export async function login(req, res, next) {
       return res.status(401).json({ message: 'Неверный номер телефона или пароль' });
     }
 
-    const valid = await bcrypt.compare(password, user.passwordHash);
+    const valid = await verifyPassword(password, user.passwordHash);
     if (!valid) {
       registerFailedAttempt(req.ip, phone);
       return res.status(401).json({ message: 'Неверный номер телефона или пароль' });
@@ -352,10 +352,10 @@ export async function changePassword(req, res, next) {
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
     if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
 
-    const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+    const valid = await verifyPassword(currentPassword, user.passwordHash);
     if (!valid) return res.status(400).json({ message: 'Текущий пароль указан неверно' });
 
-    const passwordHash = await bcrypt.hash(newPassword, 12);
+    const passwordHash = await hashPassword(newPassword);
     await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
 
     res.json({ message: 'Пароль успешно изменен' });
@@ -386,7 +386,7 @@ export async function resetPassword(req, res, next) {
       return res.status(400).json({ message: 'Срок действия кода истек. Запросите новый.' });
     }
 
-    const passwordHash = await bcrypt.hash(newPassword, 12);
+    const passwordHash = await hashPassword(newPassword);
 
     await prisma.user.update({
       where: { id: user.id },

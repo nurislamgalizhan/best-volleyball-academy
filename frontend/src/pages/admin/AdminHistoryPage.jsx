@@ -14,6 +14,7 @@ const ACTION_LABELS = {
   ADMIN_VISIT_CHECKIN: 'Ручное списание посещения',
   ADMIN_PROMOTED: 'Назначен администратор',
   ADMIN_DEMOTED: 'Сняты права администратора',
+  ADMIN_PASSWORD_RESET: 'Изменён пароль администратора',
   SUBSCRIPTION_FROZEN: 'Абонемент заморожен',
   SUBSCRIPTION_UNFROZEN: 'Абонемент разморожен',
   SUBSCRIPTION_CANCELLED: 'Абонемент деактивирован',

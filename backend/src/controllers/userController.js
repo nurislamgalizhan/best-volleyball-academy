@@ -1,7 +1,7 @@
-import bcrypt from 'bcryptjs';
 import { prisma } from '../db.js';
 import { usersQuerySchema, adjustUserSchema, createUserSchema, logsQuerySchema, freezeSchema, cancelSubscriptionSchema, activateSubscriptionSchema } from '../schemas/index.js';
 import { createAdminAction } from '../utils/adminActions.js';
+import { hashPassword } from '../utils/password.js';
 import { clearExpiredVisits, clearExpiredVisitsForUsers } from '../utils/subscription.js';
 import {
   clearedFreezeData,
@@ -196,7 +196,7 @@ export async function createUser(req, res, next) {
       return res.status(409).json({ message: 'Пользователь с таким номером уже существует' });
     }
 
-    const passwordHash = await bcrypt.hash(password, 12);
+    const passwordHash = await hashPassword(password);
     const user = await prisma.$transaction(async (tx) => {
       const createdUser = await tx.user.create({
         data: { firstName, lastName, phone, passwordHash, role: 'VISITOR', isVerified: true },

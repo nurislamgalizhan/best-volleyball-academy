@@ -1,7 +1,7 @@
-import bcrypt from 'bcryptjs';
 import { prisma } from '../db.js';
-import { createAdminSchema } from '../schemas/index.js';
+import { adminPasswordSchema, createAdminSchema } from '../schemas/index.js';
 import { createAdminAction } from '../utils/adminActions.js';
+import { hashPassword } from '../utils/password.js';
 
 function publicAdmin(user) {
   const { passwordHash, verificationCode, verificationCodeExpires, ...rest } = user;
@@ -40,7 +40,7 @@ export async function createAdmin(req, res, next) {
       });
     }
 
-    const passwordHash = await bcrypt.hash(data.password, 12);
+    const passwordHash = await hashPassword(data.password);
     const admin = await prisma.$transaction(async (tx) => {
       const created = await tx.user.create({
         data: {
@@ -73,6 +73,7 @@ export async function promoteAdmin(req, res, next) {
     if (!Number.isInteger(id)) {
       return res.status(400).json({ message: 'Некорректный пользователь' });
     }
+    const { password } = adminPasswordSchema.parse(req.body);
 
     const user = await prisma.user.findUnique({
       where: { id },
@@ -88,8 +89,18 @@ export async function promoteAdmin(req, res, next) {
       return res.status(400).json({ message: 'Нельзя назначить администратором клиента с абонементами' });
     }
 
+    const passwordHash = await hashPassword(password);
     const updated = await prisma.$transaction(async (tx) => {
-      const nextUser = await tx.user.update({ where: { id }, data: { role: 'ADMIN', isVerified: true } });
+      const nextUser = await tx.user.update({
+        where: { id },
+        data: {
+          role: 'ADMIN',
+          passwordHash,
+          isVerified: true,
+          verificationCode: null,
+          verificationCodeExpires: null,
+        },
+      });
       await createAdminAction(tx, {
         adminId: req.userId,
         targetUserId: id,
@@ -100,6 +111,48 @@ export async function promoteAdmin(req, res, next) {
     });
 
     res.json(publicAdmin(updated));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function resetAdminPassword(req, res, next) {
+  try {
+    const id = Number.parseInt(req.params.id, 10);
+    if (!Number.isInteger(id)) {
+      return res.status(400).json({ message: 'Некорректный пользователь' });
+    }
+    if (id === req.userId) {
+      return res.status(400).json({ message: 'Используйте смену пароля в настройках своего аккаунта' });
+    }
+
+    const { password } = adminPasswordSchema.parse(req.body);
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user || !user.isActive) {
+      return res.status(404).json({ message: 'Администратор не найден' });
+    }
+    if (user.role !== 'ADMIN') {
+      return res.status(400).json({ message: 'Пароль можно назначить только обычному администратору' });
+    }
+
+    const passwordHash = await hashPassword(password);
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id },
+        data: {
+          passwordHash,
+          verificationCode: null,
+          verificationCodeExpires: null,
+        },
+      });
+      await createAdminAction(tx, {
+        adminId: req.userId,
+        targetUserId: id,
+        action: 'ADMIN_PASSWORD_RESET',
+      });
+    });
+
+    res.json({ message: 'Пароль администратора изменён' });
   } catch (err) {
     next(err);
   }

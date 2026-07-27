@@ -6,16 +6,28 @@ import Input from '../../components/ui/Input.jsx';
 import PhoneInput from '../../components/ui/PhoneInput.jsx';
 import { formatPhoneDisplay, isCompletePhone, toApiPhone } from '../../utils/phone.js';
 
-const EMPTY_ADMIN = { firstName: '', lastName: '', phone: '', password: '' };
+const EMPTY_ADMIN = {
+  firstName: '',
+  lastName: '',
+  phone: '',
+  password: '',
+  confirmPassword: '',
+};
+const EMPTY_PASSWORD = { password: '', confirmPassword: '' };
 
 export default function AdminsPage() {
   const [admins, setAdmins] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState(EMPTY_ADMIN);
+  const [showCreatePassword, setShowCreatePassword] = useState(false);
   const [search, setSearch] = useState('');
   const [candidates, setCandidates] = useState([]);
   const [searching, setSearching] = useState(false);
+  const [passwordDialog, setPasswordDialog] = useState(null);
+  const [passwordForm, setPasswordForm] = useState(EMPTY_PASSWORD);
+  const [showDialogPassword, setShowDialogPassword] = useState(false);
+  const [savingPassword, setSavingPassword] = useState(false);
 
   const loadAdmins = useCallback(async () => {
     setLoading(true);
@@ -39,10 +51,20 @@ export default function AdminsPage() {
       toast.error('Введите номер в формате +7 XXX XXX XX XX');
       return;
     }
+    if (form.password !== form.confirmPassword) {
+      toast.error('Пароли не совпадают');
+      return;
+    }
     setCreating(true);
     try {
-      await api.post('/admins', { ...form, phone: toApiPhone(form.phone) });
+      await api.post('/admins', {
+        firstName: form.firstName,
+        lastName: form.lastName,
+        phone: toApiPhone(form.phone),
+        password: form.password,
+      });
       setForm(EMPTY_ADMIN);
+      setShowCreatePassword(false);
       toast.success('Администратор создан');
       await loadAdmins();
     } catch (err) {
@@ -65,14 +87,45 @@ export default function AdminsPage() {
     }
   };
 
-  const promote = async (user) => {
+  const openPasswordDialog = (mode, user) => {
+    setPasswordForm(EMPTY_PASSWORD);
+    setShowDialogPassword(false);
+    setPasswordDialog({ mode, user });
+  };
+
+  const closePasswordDialog = () => {
+    if (savingPassword) return;
+    setPasswordDialog(null);
+    setPasswordForm(EMPTY_PASSWORD);
+    setShowDialogPassword(false);
+  };
+
+  const saveAdminPassword = async (event) => {
+    event.preventDefault();
+    if (!passwordDialog) return;
+    if (passwordForm.password !== passwordForm.confirmPassword) {
+      toast.error('Пароли не совпадают');
+      return;
+    }
+
+    const { mode, user } = passwordDialog;
+    setSavingPassword(true);
     try {
-      await api.post(`/admins/${user.id}/promote`);
-      setCandidates((current) => current.filter((item) => item.id !== user.id));
-      toast.success(`${user.firstName} назначен администратором`);
+      if (mode === 'promote') {
+        await api.post(`/admins/${user.id}/promote`, { password: passwordForm.password });
+        setCandidates((current) => current.filter((item) => item.id !== user.id));
+        toast.success(`${user.firstName} назначен администратором`);
+      } else {
+        await api.post(`/admins/${user.id}/password`, { password: passwordForm.password });
+        toast.success(`Пароль для ${user.firstName} изменён`);
+      }
+      setPasswordDialog(null);
+      setPasswordForm(EMPTY_PASSWORD);
       await loadAdmins();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Не удалось назначить администратора');
+      toast.error(err.response?.data?.message || 'Не удалось сохранить пароль администратора');
+    } finally {
+      setSavingPassword(false);
     }
   };
 
@@ -112,7 +165,16 @@ export default function AdminsPage() {
                   {admin.role === 'SUPER_ADMIN' ? 'Главный администратор' : 'Администратор'}
                 </span>
                 {admin.role === 'ADMIN' && (
-                  <Button size="sm" variant="danger" onClick={() => demote(admin)}>Снять права</Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => openPasswordDialog('reset', admin)}
+                    >
+                      Сменить пароль
+                    </Button>
+                    <Button size="sm" variant="danger" onClick={() => demote(admin)}>Снять права</Button>
+                  </div>
                 )}
               </div>
             ))}
@@ -134,7 +196,35 @@ export default function AdminsPage() {
             onChange={(phone) => setForm((current) => ({ ...current, phone }))}
             required
           />
-          <Input label="Первоначальный пароль" type="password" minLength={8} value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} required />
+          <Input
+            label="Первоначальный пароль"
+            type={showCreatePassword ? 'text' : 'password'}
+            minLength={8}
+            maxLength={200}
+            autoComplete="new-password"
+            value={form.password}
+            onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
+            required
+          />
+          <Input
+            label="Повторите пароль"
+            type={showCreatePassword ? 'text' : 'password'}
+            minLength={8}
+            maxLength={200}
+            autoComplete="new-password"
+            value={form.confirmPassword}
+            onChange={(event) => setForm((current) => ({ ...current, confirmPassword: event.target.value }))}
+            required
+          />
+          <label className="flex items-center gap-2 text-sm text-slate-600">
+            <input
+              type="checkbox"
+              checked={showCreatePassword}
+              onChange={(event) => setShowCreatePassword(event.target.checked)}
+              className="h-4 w-4 accent-slate-900"
+            />
+            Показать пароль
+          </label>
           <Button type="submit" loading={creating}>Создать администратора</Button>
         </form>
 
@@ -160,7 +250,7 @@ export default function AdminsPage() {
                   <p className="text-sm font-medium text-slate-900">{candidate.firstName} {candidate.lastName}</p>
                   <p className="text-xs text-slate-500">{formatPhoneDisplay(candidate.phone)}</p>
                 </div>
-                <Button size="sm" onClick={() => promote(candidate)}>Назначить</Button>
+                <Button size="sm" onClick={() => openPasswordDialog('promote', candidate)}>Назначить</Button>
               </div>
             ))}
             {!searching && search && candidates.length === 0 && (
@@ -169,6 +259,65 @@ export default function AdminsPage() {
           </div>
         </section>
       </div>
+
+      {passwordDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-lg bg-white p-6 shadow-xl">
+            <h2 className="text-lg font-semibold text-slate-900">
+              {passwordDialog.mode === 'promote' ? 'Назначить администратора' : 'Сменить пароль'}
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              {passwordDialog.user.firstName} {passwordDialog.user.lastName}
+            </p>
+            <form onSubmit={saveAdminPassword} className="mt-5 space-y-4">
+              <Input
+                label="Новый пароль"
+                type={showDialogPassword ? 'text' : 'password'}
+                minLength={8}
+                maxLength={200}
+                autoComplete="new-password"
+                value={passwordForm.password}
+                onChange={(event) => setPasswordForm((current) => ({
+                  ...current,
+                  password: event.target.value,
+                }))}
+                required
+                autoFocus
+              />
+              <Input
+                label="Повторите пароль"
+                type={showDialogPassword ? 'text' : 'password'}
+                minLength={8}
+                maxLength={200}
+                autoComplete="new-password"
+                value={passwordForm.confirmPassword}
+                onChange={(event) => setPasswordForm((current) => ({
+                  ...current,
+                  confirmPassword: event.target.value,
+                }))}
+                required
+              />
+              <label className="flex items-center gap-2 text-sm text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={showDialogPassword}
+                  onChange={(event) => setShowDialogPassword(event.target.checked)}
+                  className="h-4 w-4 accent-slate-900"
+                />
+                Показать пароль
+              </label>
+              <div className="flex justify-end gap-2 pt-1">
+                <Button type="button" variant="secondary" onClick={closePasswordDialog}>
+                  Отмена
+                </Button>
+                <Button type="submit" loading={savingPassword}>
+                  {passwordDialog.mode === 'promote' ? 'Назначить' : 'Сохранить'}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

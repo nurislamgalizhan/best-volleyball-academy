@@ -19,6 +19,8 @@ import {
   freezePublicState,
 } from '../src/utils/freeze.js';
 import { isStaffRole, isSuperAdminRole } from '../src/utils/roles.js';
+import { adminPasswordSchema } from '../src/schemas/index.js';
+import { hashPassword, verifyPassword } from '../src/utils/password.js';
 
 test('BVA staff roles keep super-admin-only permissions separate', () => {
   assert.equal(isStaffRole('SUPER_ADMIN'), true);
@@ -26,6 +28,21 @@ test('BVA staff roles keep super-admin-only permissions separate', () => {
   assert.equal(isStaffRole('VISITOR'), false);
   assert.equal(isSuperAdminRole('SUPER_ADMIN'), true);
   assert.equal(isSuperAdminRole('ADMIN'), false);
+});
+
+test('admin password validation requires a deliberate password of at least eight characters', () => {
+  assert.equal(adminPasswordSchema.parse({ password: 'Strong pass 2026' }).password, 'Strong pass 2026');
+  assert.equal(adminPasswordSchema.safeParse({ password: 'short' }).success, false);
+  assert.equal(adminPasswordSchema.safeParse({}).success, false);
+});
+
+test('password created for an administrator is accepted by the login verifier unchanged', async () => {
+  const password = 'Admin pass ! 2026';
+  const passwordHash = await hashPassword(password);
+
+  assert.notEqual(passwordHash, password);
+  assert.equal(await verifyPassword(password, passwordHash), true);
+  assert.equal(await verifyPassword('Admin pass ! 2027', passwordHash), false);
 });
 
 test('normalizePhone normalizes local and international formats', () => {

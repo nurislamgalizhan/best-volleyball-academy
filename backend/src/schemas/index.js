@@ -148,6 +148,10 @@ export const createAdminSchema = z.object({
   password: z.string().min(8).max(200),
 });
 
+export const adminPasswordSchema = z.object({
+  password: z.string().min(8, 'Пароль минимум 8 символов').max(200, 'Пароль максимум 200 символов'),
+});
+
 export const adminCheckInSchema = z.object({
   userId: z.number().int().positive(),
   sectionId: z.number().int().positive().optional(),
