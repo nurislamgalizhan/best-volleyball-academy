@@ -5,7 +5,6 @@ import LoginPage from './pages/LoginPage.jsx';
 import RegisterPage from './pages/RegisterPage.jsx';
 import VerifyPage from './pages/VerifyPage.jsx';
 import ForgotPasswordPage from './pages/ForgotPasswordPage.jsx';
-import AdminMfaPage from './pages/AdminMfaPage.jsx';
 
 import AdminLayout from './pages/admin/AdminLayout.jsx';
 import AdminDashboard from './pages/admin/AdminDashboard.jsx';
@@ -53,7 +52,6 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/verify" element={<VerifyPage />} />
-      <Route path="/admin-mfa" element={<AdminMfaPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
       <Route

@@ -16,7 +16,6 @@ import {
   registerFailedAttempt,
 } from '../utils/authRateLimit.js';
 import { buildUserProfile } from '../utils/userProfile.js';
-import { isStaffRole } from '../utils/roles.js';
 import { hashPassword, verifyPassword } from '../utils/password.js';
 
 const CODE_TTL_MS = 10 * 60 * 1000;
@@ -79,32 +78,6 @@ async function issueCodeToUser(userId, phone, context) {
     });
     return { ok: false, user: updated, error: err };
   }
-}
-
-async function buildAdminMfaResponse(user, context) {
-  const secondsLeft = checkResendCooldown(user.verificationCodeExpires);
-  let resendCooldown = secondsLeft ?? 0;
-  let deliveryFailed = false;
-  let message = '';
-
-  if (secondsLeft) {
-    message = `Код уже отправлен. Повторите через ${secondsLeft} сек.`;
-  } else {
-    const result = await issueCodeToUser(user.id, user.phone, context);
-    deliveryFailed = !result.ok;
-    resendCooldown = result.ok ? result.resendCooldown : 0;
-    message = result.ok
-      ? 'Код подтверждения отправлен в WhatsApp.'
-      : 'Не удалось отправить код в WhatsApp. Нажмите "Отправить повторно".';
-  }
-
-  return {
-    requiresAdminMfa: true,
-    phone: user.phone,
-    resendCooldown,
-    deliveryFailed,
-    message,
-  };
 }
 
 export async function register(req, res, next) {
@@ -235,67 +208,9 @@ export async function login(req, res, next) {
 
     clearFailedAttempts(req.ip, phone);
 
-    if (isStaffRole(user.role)) {
-      return res.json(await buildAdminMfaResponse(user, 'AdminLogin'));
-    }
-
     const token = signToken(user);
     const profile = await buildUserProfile(user);
     res.json({ token, user: profile });
-  } catch (err) {
-    next(err);
-  }
-}
-
-export async function adminMfaVerify(req, res, next) {
-  try {
-    const { phone, code } = verifyCodeSchema.parse(req.body);
-
-    const user = await prisma.user.findUnique({ where: { phone } });
-    if (!user || !user.isActive || !isStaffRole(user.role)) {
-      return res.status(404).json({ message: 'Администратор не найден' });
-    }
-
-    if (!user.verificationCode || user.verificationCode !== code) {
-      return res.status(400).json({ message: 'Неверный код подтверждения' });
-    }
-    if (!user.verificationCodeExpires || user.verificationCodeExpires < new Date()) {
-      return res.status(400).json({ message: 'Срок действия кода истек. Запросите новый.' });
-    }
-
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { verificationCode: null, verificationCodeExpires: null },
-    });
-
-    const token = signToken(user);
-    const profile = await buildUserProfile(user);
-    res.json({ token, user: profile });
-  } catch (err) {
-    next(err);
-  }
-}
-
-export async function adminMfaResend(req, res, next) {
-  try {
-    const { phone } = resendCodeSchema.parse(req.body);
-
-    const user = await prisma.user.findUnique({ where: { phone } });
-    if (!user || !user.isActive || !isStaffRole(user.role)) {
-      return res.status(404).json({ message: 'Администратор не найден' });
-    }
-
-    const secondsLeft = checkResendCooldown(user.verificationCodeExpires);
-    if (secondsLeft) {
-      return res.status(429).json({ message: `Подождите ${secondsLeft} сек. перед повторной отправкой` });
-    }
-
-    const result = await issueCodeToUser(user.id, phone, 'AdminMfaResend');
-    if (!result.ok) {
-      return res.status(502).json({ message: 'Не удалось отправить код в WhatsApp.' });
-    }
-
-    res.json({ message: 'Новый код отправлен' });
   } catch (err) {
     next(err);
   }

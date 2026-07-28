@@ -5,8 +5,6 @@ import {
   verifyPhone,
   resendCode,
   login,
-  adminMfaVerify,
-  adminMfaResend,
   getMe,
   forgotPassword,
   resetPassword,
@@ -19,10 +17,6 @@ router.post('/register', register);
 router.post('/verify', verifyPhone);
 router.post('/resend-code', resendCode);
 router.post('/login', login);
-
-// Admin 2FA: second step after password validation
-router.post('/admin-mfa/verify', adminMfaVerify);
-router.post('/admin-mfa/resend', adminMfaResend);
 
 router.get('/me', authenticate, getMe);
 router.patch('/me/password', authenticate, changePassword);

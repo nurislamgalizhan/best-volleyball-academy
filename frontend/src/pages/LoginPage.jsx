@@ -64,18 +64,6 @@ export default function LoginPage() {
       const { data } = await api.post('/auth/login', payload);
       attemptsRef.current = 0;
 
-      if (data.requiresAdminMfa) {
-        if (data.deliveryFailed) {
-          toast.error(data.message || 'Не удалось отправить код в WhatsApp');
-        } else {
-          toast.success(data.message || 'Код подтверждения отправлен в WhatsApp');
-        }
-        navigate('/admin-mfa', {
-          state: { phone: data.phone, resendCooldown: data.resendCooldown ?? 60 },
-        });
-        return;
-      }
-
       login(data.token, data.user);
       toast.success(`Добро пожаловать, ${data.user.firstName}!`);
       navigate(isStaffRole(data.user.role) ? '/admin' : '/visitor');

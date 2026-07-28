@@ -71,7 +71,7 @@ docker compose -p volleyball-sync -f docker-compose.sync.yml run --rm sync node 
 ## Auth
 - Телефон + пароль
 - Коды подтверждения в WhatsApp через Green API
-- Admin MFA тоже использует WhatsApp-код через Green API
+- Администраторы входят по телефону и паролю без дополнительного MFA-кода
 
 ## API Endpoints
 
