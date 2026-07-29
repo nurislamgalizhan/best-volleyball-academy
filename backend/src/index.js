@@ -11,6 +11,7 @@ import {
   startDailyExpiredVisitsCleanupJob,
   startExpiredFreezeCleanupJob,
 } from './utils/subscription.js';
+import { startRegistrationCleanupJob } from './utils/registrationSecurity.js';
 
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
@@ -20,6 +21,7 @@ import visitRoutes from './routes/visits.js';
 import saleRoutes from './routes/sales.js';
 import adminRoutes from './routes/admins.js';
 import syncRoutes from './routes/sync.js';
+import verificationRequestRoutes from './routes/verificationRequests.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -36,6 +38,7 @@ initSocket(io);
 app.disable('x-powered-by');
 startDailyExpiredVisitsCleanupJob(prisma);
 startExpiredFreezeCleanupJob(prisma);
+startRegistrationCleanupJob(prisma);
 
 app.use(
   cors({
@@ -54,6 +57,7 @@ app.use('/api/visits', visitRoutes);
 app.use('/api/sales', saleRoutes);
 app.use('/api/admins', adminRoutes);
 app.use('/api/sync', syncRoutes);
+app.use('/api/verification-requests', verificationRequestRoutes);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 

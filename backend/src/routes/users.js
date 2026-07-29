@@ -15,6 +15,7 @@ import {
   createClientNote,
   updateClientNote,
   deleteClientNote,
+  resetClientPassword,
 } from '../controllers/userController.js';
 
 const router = Router();
@@ -28,6 +29,7 @@ router.use(authenticate, requireVerified, requireStaff);
 router.get('/', getUsers);
 router.get('/admin-history', requireSuperAdmin, getAdminActionLogs);
 router.post('/', createUser);
+router.post('/:id/reset-password', resetClientPassword);
 router.get('/:id/notes', getClientNotes);
 router.post('/:id/notes', createClientNote);
 router.patch('/:id/notes/:noteId', updateClientNote);

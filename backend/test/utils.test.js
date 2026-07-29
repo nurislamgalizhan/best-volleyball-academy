@@ -4,6 +4,7 @@ import { normalizePhone } from '../src/utils/phone.js';
 import { getDuplicateVisitWarning } from '../src/utils/visits.js';
 import {
   clearFailedAttempts,
+  clearFailedAttemptsForIdentifier,
   getRateLimitState,
   registerFailedAttempt,
 } from '../src/utils/authRateLimit.js';
@@ -28,6 +29,12 @@ import { hashPassword, verifyPassword } from '../src/utils/password.js';
 import { createThrottledQueue } from '../src/utils/messageQueue.js';
 import { buildVerificationMessage } from '../src/services/whatsappService.js';
 import { checkResendCooldown } from '../src/controllers/authController.js';
+import {
+  cleanupExpiredRegistrationRequests,
+  createRegistrationStatusToken,
+  generateTemporaryPassword,
+  hashRegistrationStatusToken,
+} from '../src/utils/registrationSecurity.js';
 
 test('BVA staff roles keep super-admin-only permissions separate', () => {
   assert.equal(isStaffRole('SUPER_ADMIN'), true);
@@ -86,6 +93,52 @@ test('registration resend cooldown blocks a fresh code and allows an older one',
   } finally {
     Date.now = originalNow;
   }
+});
+
+test('registration status tokens are opaque and only their hashes are persisted', () => {
+  const first = createRegistrationStatusToken();
+  const second = createRegistrationStatusToken();
+
+  assert.notEqual(first.token, second.token);
+  assert.match(first.token, /^[A-Za-z0-9_-]{40,}$/);
+  assert.equal(first.tokenHash, hashRegistrationStatusToken(first.token));
+  assert.notEqual(first.tokenHash, first.token);
+});
+
+test('temporary client passwords use the one-time administrator format', () => {
+  const passwords = new Set(Array.from({ length: 20 }, generateTemporaryPassword));
+  assert.equal(passwords.size, 20);
+  for (const password of passwords) {
+    assert.match(password, /^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+  }
+});
+
+test('registration cleanup removes only requests older than 30 days', async () => {
+  const now = new Date('2026-07-30T12:00:00.000Z');
+  const operations = [];
+  const prismaClient = {
+    adminVerificationRequest: {
+      deleteMany: (payload) => {
+        operations.push(['admin', payload]);
+        return Promise.resolve({ count: 2 });
+      },
+    },
+    registrationAttempt: {
+      deleteMany: (payload) => {
+        operations.push(['whatsapp', payload]);
+        return Promise.resolve({ count: 3 });
+      },
+    },
+    $transaction: (queries) => Promise.all(queries),
+  };
+
+  const result = await cleanupExpiredRegistrationRequests(prismaClient, now);
+  const expectedCutoff = new Date('2026-06-30T12:00:00.000Z');
+  assert.deepEqual(result, { adminRequests: 2, whatsappAttempts: 3 });
+  assert.deepEqual(operations, [
+    ['admin', { where: { createdAt: { lt: expectedCutoff } } }],
+    ['whatsapp', { where: { createdAt: { lt: expectedCutoff } } }],
+  ]);
 });
 
 test('WhatsApp queue serializes messages with a fixed minimum interval', async () => {
@@ -162,6 +215,14 @@ test('auth rate limiter blocks after too many attempts and can be reset', () => 
 
   clearFailedAttempts(ip, phone);
   assert.equal(getRateLimitState(ip, phone).blocked, false);
+
+  for (let index = 0; index < 10; index += 1) {
+    registerFailedAttempt('10.0.0.1', phone);
+    registerFailedAttempt('10.0.0.2', phone);
+  }
+  clearFailedAttemptsForIdentifier(phone);
+  assert.equal(getRateLimitState('10.0.0.1', phone).blocked, false);
+  assert.equal(getRateLimitState('10.0.0.2', phone).blocked, false);
 });
 
 test('freeze plan extends the end date only by days actually used', () => {

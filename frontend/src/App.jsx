@@ -5,6 +5,8 @@ import LoginPage from './pages/LoginPage.jsx';
 import RegisterPage from './pages/RegisterPage.jsx';
 import VerifyPage from './pages/VerifyPage.jsx';
 import ForgotPasswordPage from './pages/ForgotPasswordPage.jsx';
+import VerificationPendingPage from './pages/VerificationPendingPage.jsx';
+import TemporaryPasswordPage from './pages/TemporaryPasswordPage.jsx';
 
 import AdminLayout from './pages/admin/AdminLayout.jsx';
 import AdminDashboard from './pages/admin/AdminDashboard.jsx';
@@ -15,6 +17,7 @@ import AccountingPage from './pages/admin/AccountingPage.jsx';
 import TariffsAdminPage from './pages/admin/TariffsAdminPage.jsx';
 import AdminHistoryPage from './pages/admin/AdminHistoryPage.jsx';
 import AdminsPage from './pages/admin/AdminsPage.jsx';
+import VerificationRequestsPage from './pages/admin/VerificationRequestsPage.jsx';
 
 import VisitorLayout from './pages/visitor/VisitorLayout.jsx';
 import VisitorHome from './pages/visitor/VisitorHome.jsx';
@@ -22,7 +25,7 @@ import VisitorTariffsPage from './pages/visitor/VisitorTariffsPage.jsx';
 import VisitorHistoryPage from './pages/visitor/VisitorHistoryPage.jsx';
 import { isStaffRole } from './utils/roles.js';
 
-function RequireAuth({ children, role, roles }) {
+function RequireAuth({ children, role, roles, allowPasswordChange = false }) {
   const { user, loading } = useAuth();
   if (loading) {
     return (
@@ -32,6 +35,10 @@ function RequireAuth({ children, role, roles }) {
     );
   }
   if (!user) return <Navigate to="/login" replace />;
+  if (user.mustChangePassword && !allowPasswordChange) {
+    return <Navigate to="/change-temporary-password" replace />;
+  }
+  if (!user.mustChangePassword && allowPasswordChange) return <Navigate to="/" replace />;
   if (role && user.role !== role) return <Navigate to="/" replace />;
   if (roles && !roles.includes(user.role)) return <Navigate to="/" replace />;
   return children;
@@ -41,6 +48,7 @@ function RootRedirect() {
   const { user, loading } = useAuth();
   if (loading) return null;
   if (!user) return <Navigate to="/login" replace />;
+  if (user.mustChangePassword) return <Navigate to="/change-temporary-password" replace />;
   if (isStaffRole(user.role)) return <Navigate to="/admin" replace />;
   return <Navigate to="/visitor" replace />;
 }
@@ -52,7 +60,12 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/verify" element={<VerifyPage />} />
+      <Route path="/verification-pending" element={<VerificationPendingPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route
+        path="/change-temporary-password"
+        element={<RequireAuth allowPasswordChange><TemporaryPasswordPage /></RequireAuth>}
+      />
 
       <Route
         path="/admin"
@@ -65,6 +78,7 @@ export default function App() {
         <Route index element={<AdminDashboard />} />
         <Route path="users" element={<UsersPage />} />
         <Route path="users/:id" element={<UserDetailPage />} />
+        <Route path="verification" element={<VerificationRequestsPage />} />
         <Route path="visits" element={<VisitsAdminPage />} />
         <Route path="accounting" element={<RequireAuth role="SUPER_ADMIN"><AccountingPage /></RequireAuth>} />
         <Route path="history" element={<RequireAuth role="SUPER_ADMIN"><AdminHistoryPage /></RequireAuth>} />

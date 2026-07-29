@@ -66,7 +66,11 @@ export default function LoginPage() {
 
       login(data.token, data.user);
       toast.success(`Добро пожаловать, ${data.user.firstName}!`);
-      navigate(isStaffRole(data.user.role) ? '/admin' : '/visitor');
+      navigate(
+        data.user.mustChangePassword
+          ? '/change-temporary-password'
+          : isStaffRole(data.user.role) ? '/admin' : '/visitor'
+      );
     } catch (err) {
       attemptsRef.current += 1;
       toast.error(err.response?.data?.message || 'Неверный номер телефона или пароль');

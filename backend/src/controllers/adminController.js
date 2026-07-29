@@ -4,7 +4,14 @@ import { createAdminAction } from '../utils/adminActions.js';
 import { hashPassword } from '../utils/password.js';
 
 function publicAdmin(user) {
-  const { passwordHash, verificationCode, verificationCodeExpires, ...rest } = user;
+  const {
+    passwordHash,
+    verificationCode,
+    verificationCodeExpires,
+    tokenVersion,
+    registrationStatusTokenHash,
+    ...rest
+  } = user;
   return rest;
 }
 
