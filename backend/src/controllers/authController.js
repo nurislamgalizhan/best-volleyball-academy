@@ -29,7 +29,7 @@ function signToken(user) {
   );
 }
 
-function checkResendCooldown(verificationCodeExpires) {
+export function checkResendCooldown(verificationCodeExpires) {
   if (!verificationCodeExpires) return null;
   const sentAt = new Date(verificationCodeExpires.getTime() - CODE_TTL_MS);
   const secondsLeft = Math.ceil((sentAt.getTime() + RESEND_COOLDOWN_SECONDS * 1000 - Date.now()) / 1000);
@@ -46,13 +46,13 @@ async function issueCodeToAttempt(attemptId, phone, context) {
   });
 
   try {
-    await sendVerificationCode(phone, code);
+    await sendVerificationCode(phone, code, updated.firstName);
     return { ok: true, attempt: updated, resendCooldown: RESEND_COOLDOWN_SECONDS };
   } catch (err) {
     console.error(`[${context}] Green API error:`, err.message);
     await prisma.registrationAttempt.update({
       where: { id: attemptId },
-      data: { verificationCode: null, verificationCodeExpires: null },
+      data: { verificationCode: null },
     });
     return { ok: false, error: err };
   }
@@ -68,13 +68,13 @@ async function issueCodeToUser(userId, phone, context) {
   });
 
   try {
-    await sendVerificationCode(phone, code);
+    await sendVerificationCode(phone, code, updated.firstName);
     return { ok: true, user: updated, resendCooldown: RESEND_COOLDOWN_SECONDS };
   } catch (err) {
     console.error(`[${context}] Green API error:`, err.message);
     await prisma.user.update({
       where: { id: userId },
-      data: { verificationCode: null, verificationCodeExpires: null },
+      data: { verificationCode: null },
     });
     return { ok: false, user: updated, error: err };
   }
@@ -89,6 +89,15 @@ export async function register(req, res, next) {
       return res.status(409).json({ message: 'Пользователь с таким номером уже существует' });
     }
 
+    const existingAttempt = await prisma.registrationAttempt.findUnique({ where: { phone } });
+    const secondsLeft = checkResendCooldown(existingAttempt?.verificationCodeExpires);
+    if (secondsLeft) {
+      return res.status(429).json({
+        message: `Код уже отправлен. Подождите ${secondsLeft} сек. перед повторной отправкой`,
+        resendCooldown: secondsLeft,
+      });
+    }
+
     await prisma.registrationAttempt.deleteMany({
       where: {
         phone,
@@ -99,13 +108,13 @@ export async function register(req, res, next) {
     const passwordHash = await hashPassword(password);
     const attempt = await prisma.registrationAttempt.upsert({
       where: { phone },
-      update: { passwordHash, firstName, lastName, verificationCode: null, verificationCodeExpires: null },
+      update: { passwordHash, firstName, lastName },
       create: { phone, passwordHash, firstName, lastName },
     });
 
     const result = await issueCodeToAttempt(attempt.id, phone, 'Register');
     if (!result.ok) {
-      return res.status(502).json({
+      return res.status(result.error?.statusCode || 502).json({
         message: 'Не удалось отправить код подтверждения в WhatsApp. Попробуйте еще раз.',
       });
     }
@@ -172,7 +181,7 @@ export async function resendCode(req, res, next) {
 
     const result = await issueCodeToAttempt(attempt.id, phone, 'ResendCode');
     if (!result.ok) {
-      return res.status(502).json({
+      return res.status(result.error?.statusCode || 502).json({
         message: 'Не удалось отправить код в WhatsApp. Попробуйте еще раз.',
       });
     }
@@ -243,7 +252,7 @@ export async function forgotPassword(req, res, next) {
 
     const result = await issueCodeToUser(user.id, phone, 'ForgotPassword');
     if (!result.ok) {
-      return res.status(502).json({
+      return res.status(result.error?.statusCode || 502).json({
         message: 'Не удалось отправить код в WhatsApp. Попробуйте еще раз.',
       });
     }

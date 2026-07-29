@@ -25,6 +25,9 @@ import {
   deleteUserSchema,
 } from '../src/schemas/index.js';
 import { hashPassword, verifyPassword } from '../src/utils/password.js';
+import { createThrottledQueue } from '../src/utils/messageQueue.js';
+import { buildVerificationMessage } from '../src/services/whatsappService.js';
+import { checkResendCooldown } from '../src/controllers/authController.js';
 
 test('BVA staff roles keep super-admin-only permissions separate', () => {
   assert.equal(isStaffRole('SUPER_ADMIN'), true);
@@ -59,6 +62,73 @@ test('password created for an administrator is accepted by the login verifier un
   assert.notEqual(passwordHash, password);
   assert.equal(await verifyPassword(password, passwordHash), true);
   assert.equal(await verifyPassword('Admin pass ! 2027', passwordHash), false);
+});
+
+test('verification message starts with a sanitized client name and keeps the code visible', () => {
+  const message = buildVerificationMessage('  Алия\n_*  ', '123456');
+
+  assert.equal(message.startsWith('Здравствуйте, Алия!'), true);
+  assert.match(message, /Код подтверждения: \*123456\*/);
+  assert.match(message, /Если вы не запрашивали код/);
+  assert.equal(message.includes('\n_*'), false);
+});
+
+test('registration resend cooldown blocks a fresh code and allows an older one', () => {
+  const originalNow = Date.now;
+  Date.now = () => new Date('2026-07-30T12:00:00.000Z').getTime();
+
+  try {
+    const freshExpiry = new Date('2026-07-30T12:09:45.000Z');
+    const oldExpiry = new Date('2026-07-30T12:08:00.000Z');
+
+    assert.equal(checkResendCooldown(freshExpiry), 45);
+    assert.equal(checkResendCooldown(oldExpiry), null);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test('WhatsApp queue serializes messages with a fixed minimum interval', async () => {
+  let currentTime = 1000;
+  const waits = [];
+  const starts = [];
+  const enqueue = createThrottledQueue({
+    intervalMs: 5000,
+    maxPending: 3,
+    now: () => currentTime,
+    wait: async (milliseconds) => {
+      waits.push(milliseconds);
+      currentTime += milliseconds;
+    },
+  });
+
+  await Promise.all([
+    enqueue(async () => starts.push(currentTime)),
+    enqueue(async () => starts.push(currentTime)),
+    enqueue(async () => starts.push(currentTime)),
+  ]);
+
+  assert.deepEqual(starts, [1000, 6000, 11000]);
+  assert.deepEqual(waits, [5000, 5000]);
+});
+
+test('WhatsApp queue rejects excess pending messages', async () => {
+  let releaseFirst;
+  const firstTask = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  const enqueue = createThrottledQueue({
+    intervalMs: 1,
+    maxPending: 1,
+  });
+
+  const first = enqueue(() => firstTask);
+  await assert.rejects(
+    enqueue(async () => 'second'),
+    (error) => error.statusCode === 503
+  );
+  releaseFirst();
+  await first;
 });
 
 test('normalizePhone normalizes local and international formats', () => {

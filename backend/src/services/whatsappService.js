@@ -1,7 +1,14 @@
 import axios from 'axios';
 import { normalizePhone } from '../utils/phone.js';
+import { createThrottledQueue } from '../utils/messageQueue.js';
 
 const DEFAULT_API_URL = 'https://api.green-api.com';
+const AUTHORIZATION_CACHE_MS = 30 * 1000;
+const enqueueMessage = createThrottledQueue({
+  intervalMs: process.env.WHATSAPP_SEND_INTERVAL_MS,
+  maxPending: process.env.WHATSAPP_MAX_PENDING_MESSAGES,
+});
+let authorizedUntil = 0;
 
 function getGreenApiConfig() {
   return {
@@ -24,6 +31,8 @@ function buildMethodUrl(method) {
 }
 
 async function ensureInstanceAuthorized() {
+  if (authorizedUntil > Date.now()) return;
+
   const { data } = await axios.get(buildMethodUrl('getStateInstance'), {
     timeout: 10000,
   });
@@ -31,6 +40,8 @@ async function ensureInstanceAuthorized() {
   if (data?.stateInstance !== 'authorized') {
     throw new Error(`Green API instance не авторизован: ${data?.stateInstance || 'unknown'}`);
   }
+
+  authorizedUntil = Date.now() + AUTHORIZATION_CACHE_MS;
 }
 
 export function generateVerificationCode() {
@@ -41,30 +52,45 @@ export async function sendWhatsAppMessage(phone, message) {
   const chatId = `${normalizePhone(phone)}@c.us`;
 
   try {
-    await ensureInstanceAuthorized();
+    return await enqueueMessage(async () => {
+      await ensureInstanceAuthorized();
 
-    const { data } = await axios.post(
-      buildMethodUrl('sendMessage'),
-      { chatId, message },
-      {
-        timeout: 15000,
-        headers: { 'Content-Type': 'application/json' },
+      const { data } = await axios.post(
+        buildMethodUrl('sendMessage'),
+        { chatId, message },
+        {
+          timeout: 15000,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+
+      if (!data?.idMessage) {
+        throw new Error('Green API не вернул idMessage');
       }
-    );
 
-    if (!data?.idMessage) {
-      throw new Error('Green API не вернул idMessage');
-    }
-
-    return data;
+      return data;
+    });
   } catch (error) {
     const details = error.response?.data || error.message;
     console.error('[Green API] Failed to send WhatsApp message:', details);
-    throw new Error('Не удалось отправить сообщение WhatsApp через Green API');
+    const wrapped = new Error('Не удалось отправить сообщение WhatsApp через Green API');
+    wrapped.statusCode = error.statusCode || (error.response?.status === 429 ? 429 : 502);
+    throw wrapped;
   }
 }
 
-export async function sendVerificationCode(phone, code) {
-  const message = `Ваш код подтверждения для Best Volleyball Academy: *${code}*\n\nКод действителен 10 минут.`;
+export function buildVerificationMessage(firstName, code) {
+  const safeName = String(firstName || '')
+    .replace(/[\n\r\t*_~`]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+  const greeting = safeName ? `Здравствуйте, ${safeName}!` : 'Здравствуйте!';
+
+  return `${greeting}\n\nВы запросили код подтверждения для Best Volleyball Academy.\n\nКод подтверждения: *${code}*\nКод действует 10 минут. Никому не сообщайте его.\n\nЕсли вы не запрашивали код, просто проигнорируйте это сообщение.`;
+}
+
+export async function sendVerificationCode(phone, code, firstName) {
+  const message = buildVerificationMessage(firstName, code);
   return sendWhatsAppMessage(phone, message);
 }
